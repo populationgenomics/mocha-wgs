@@ -1,0 +1,12 @@
+version: 1.2
+workflows:
+  - name: MochaWgsPreprocess
+    subclass: WDL
+    primaryDescriptorPath: /workflow/wgs_preprocess.wdl
+    publish: true
+    authors:
+      - name: "Michael Geaghan"
+        orcid: "0000-0002-4350-8600"
+        email: m.geaghan@garvan.org.au
+        role: "Senior Production Bioinformatician"
+        affiliation: "Garvan Institute of Medical Research"
