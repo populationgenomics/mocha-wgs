@@ -83,6 +83,7 @@ workflow MochaWgsPreprocess {
                 gvcf_index = gvcf_index,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
+                ref_dict = ref_dict,
                 intervals = subintervals,
                 dbsnp = dbsnp,
                 dbsnp_index = dbsnp_index,
@@ -326,6 +327,7 @@ task MochaGenotypeGVCFs {
         File gvcf_index
         File ref_fasta
         File ref_fai
+        File ref_dict
         File intervals
         File dbsnp
         File dbsnp_index
