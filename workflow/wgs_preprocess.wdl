@@ -44,6 +44,8 @@ workflow MochaWgsPreprocess {
         File mills_index
         File axiom_poly
         File axiom_poly_index
+        Int snps_max_gaussians = 6
+        Int indels_max_gaussians = 4
 
         # Runtime options
         String gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
@@ -157,6 +159,7 @@ workflow MochaWgsPreprocess {
             g1000_index = g1000_index,
             dbsnp = dbsnp,
             dbsnp_index = dbsnp_index,
+            max_gaussians = snps_max_gaussians,
             gatk_docker = gatk_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -179,6 +182,7 @@ workflow MochaWgsPreprocess {
             dbsnp_index = dbsnp_index,
             axiom_poly = axiom_poly,
             axiom_poly_index = axiom_poly_index,
+            max_gaussians = indels_max_gaussians,
             gatk_docker = gatk_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -516,6 +520,7 @@ task MochaSnpRecalibrator {
         File g1000_index
         File dbsnp
         File dbsnp_index
+        Int max_gaussians = 6
 
         # Runtime options
         String gatk_docker
@@ -542,7 +547,7 @@ task MochaSnpRecalibrator {
             -tranche $(echo ~{snp_recal_tranche_values} | sed -E -e 's/,/ -tranche /g') \
             -an $(echo ~{snp_recal_an_values} | sed -E -e 's/,/ -an /g') \
             -mode SNP \
-            --max-gaussians 6 \
+            --max-gaussians ~{max_gaussians} \
             -resource:hapmap,known=false,training=true,truth=true,prior=15.0 ~{hapmap} \
             -resource:omni,known=false,training=true,truth=true,prior=12.0 ~{omni} \
             -resource:1000G,known=false,training=true,truth=false,prior=10.0 ~{g1000} \
@@ -578,6 +583,7 @@ task MochaIndelRecalibrator {
         File dbsnp_index
         File axiom_poly
         File axiom_poly_index
+        Int max_gaussians = 4
 
         # Runtime options
         String gatk_docker
@@ -604,7 +610,7 @@ task MochaIndelRecalibrator {
             -tranche $(echo ~{indel_recal_tranche_values} | sed -E -e 's/,/ -tranche /g') \
             -an $(echo ~{indel_recal_an_values} | sed -E -e 's/,/ -an /g') \
             -mode INDEL \
-            --max-gaussians 4 \
+            --max-gaussians ~{max_gaussians} \
             -resource:mills,known=false,training=true,truth=true,prior=12.0 ~{mills} \
             -resource:axiomPoly,known=false,training=true,truth=false,prior=2.0 ~{axiom_poly} \
             -resource:dbsnp,known=true,training=false,truth=false,prior=2.0 ~{dbsnp}
