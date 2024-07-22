@@ -49,7 +49,7 @@ workflow MochaWgsPreprocess {
 
         # Runtime options
         String gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
-        String mochatools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/mochatools:1.20"
+        String mochatools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/mochatools:latest"
         Int preemptible = 2
         Int max_retries = 2
         Int gatk_cpu = 4
