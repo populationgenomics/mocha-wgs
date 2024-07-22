@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y libbz2-dev liblzma-dev git wget bash bz
   && make install \
   && cd - \
   && cd /software/tmp/bcftools-1.20 \
+  && for f in mocha.h beta_binom.h genome_rules.h mocha.c trio-phase.c mochatools.c extendFMT.c; do wget -P plugins https://raw.githubusercontent.com/freeseek/mocha/master/${f}; done \
   && ./configure --prefix=/software/bcftools-1.20/build \
   && make \
   && make install \

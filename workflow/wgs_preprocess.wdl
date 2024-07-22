@@ -49,7 +49,7 @@ workflow MochaWgsPreprocess {
 
         # Runtime options
         String gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
-        String bcftools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/bcftools:1.20"
+        String mochatools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/mochatools:1.20"
         Int preemptible = 2
         Int max_retries = 2
         Int gatk_cpu = 4
@@ -220,7 +220,7 @@ workflow MochaWgsPreprocess {
             vcf_index = MochaApplyVqsr.vqsr_vcf_index,
             ref_fasta = ref_fasta,
             ref_fai = ref_fai,
-            bcftools_docker = bcftools_docker,
+            mochatools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
             gatk_cpu = gatk_cpu,
@@ -705,7 +705,7 @@ task MochaAddGcContent {
         File ref_fai
 
         # Runtime options
-        String bcftools_docker
+        String mochatools_docker
         Int preemptible = 2
         Int max_retries = 2
         Int gatk_cpu = 4
@@ -737,7 +737,7 @@ task MochaAddGcContent {
     }
 
     runtime {
-        docker: bcftools_docker
+        docker: mochatools_docker
         cpu: gatk_cpu
         memory: gatk_mem + " GB"
         disks: "local-disk " + disk + " HDD"
