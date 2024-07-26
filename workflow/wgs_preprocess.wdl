@@ -239,6 +239,7 @@ workflow MochaWgsPreprocess {
                 vcf_index = MochaAddGcContent.gc_vcf_index,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
+                ref_dict = ref_dict,
                 intervals = subintervals,
                 mutect2_docker = mutect2_docker,
                 preemptible = preemptible,
@@ -755,6 +756,7 @@ task MochaMutect2AddAllelicDepths {
         File vcf_index
         File ref_fasta
         File ref_fai
+        File ref_dict
         File intervals
 
         # Runtime options
@@ -775,15 +777,15 @@ task MochaMutect2AddAllelicDepths {
         gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" GetSampleName -R ~{ref_fasta} -I ~{cram} -O sample_name.txt -encode
         SAMPLENAME=$(cat sample_name.txt)
         gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" Mutect2 \
-            -R ${ref_fasta} \
-            -I ${cram} -tumor "$SAMPLENAME" \
-            -O ${cram_basename}.m2.vcf.gz \
-            -L ${intervals} \
+            -R ~{ref_fasta} \
+            -I ~{cram} -tumor "$SAMPLENAME" \
+            -O ~{cram_basename}.m2.vcf.gz \
+            -L ~{intervals} \
             --max-reads-per-alignment-start 0 \
             --max-mnp-distance 0 \
             --allow-non-unique-kmers-in-ref \
             --genotyping-mode GENOTYPE_GIVEN_ALLELES \
-            --alleles ${vcf}
+            --alleles ~{vcf}
     >>>
 
     output {
