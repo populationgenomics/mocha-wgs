@@ -230,53 +230,14 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
-    scatter (subintervals in SplitIntervals.interval_files) {
-        call MochaMutect2AddAllelicDepths {
-            input:
-                cram = alignments,
-                cram_index = alignments_index,
-                vcf = MochaAddGcContent.gc_vcf,
-                vcf_index = MochaAddGcContent.gc_vcf_index,
-                ref_fasta = ref_fasta,
-                ref_fai = ref_fai,
-                ref_dict = ref_dict,
-                intervals = subintervals,
-                mutect2_docker = mutect2_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-    }
-
-    String merged_m2_vcf_basename = basename(MochaMutect2AddAllelicDepths.m2_vcf[0], ".vcf.gz")
-
-    call MergeVcfs as MergeMutect2Vcfs {
-        input:
-            vcfs = MochaMutect2AddAllelicDepths.m2_vcf,
-            vcf_indexes = MochaMutect2AddAllelicDepths.m2_vcf_index,
-            output_name = merged_vcf_basename,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
-
 
     output {
         File genotyped_vcf = MergeGenotypedVcfs.merged_vcf
         File genotyped_vcf_index = MergeGenotypedVcfs.merged_vcf_index
         File filtered_vcf = MochaApplyVqsr.vqsr_vcf
         File filtered_vcf_index = MochaApplyVqsr.vqsr_vcf_index
-        File mocha_ready_vcf = MergeMutect2Vcfs.merged_vcf
-        File mocha_ready_vcf_index = MergeMutect2Vcfs.merged_vcf_index
+        File mocha_ready_vcf = MochaAddGcContent.gc_vcf
+        File mocha_ready_vcf_index = MochaAddGcContent.gc_vcf_index
     }
 }
 
@@ -739,62 +700,6 @@ task MochaAddGcContent {
 
     runtime {
         docker: mochatools_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task MochaMutect2AddAllelicDepths {
-    input {
-        File cram
-        File cram_index
-        File vcf
-        File vcf_index
-        File ref_fasta
-        File ref_fai
-        File ref_dict
-        File intervals
-
-        # Runtime options
-        String mutect2_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String cram_basename = basename(basename(cram, ".cram"), ".bam")
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" GetSampleName -R ~{ref_fasta} -I ~{cram} -O sample_name.txt -encode
-        SAMPLENAME=$(cat sample_name.txt)
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" Mutect2 \
-            -R ~{ref_fasta} \
-            -I ~{cram} -tumor "$SAMPLENAME" \
-            -O ~{cram_basename}.m2.vcf.gz \
-            -L ~{intervals} \
-            --max-reads-per-alignment-start 0 \
-            --max-mnp-distance 0 \
-            --allow-non-unique-kmers-in-ref \
-            --genotyping-mode GENOTYPE_GIVEN_ALLELES \
-            --alleles ~{vcf}
-    >>>
-
-    output {
-        File m2_vcf = "${cram_basename}.m2.vcf.gz"
-        File m2_vcf_index = "${cram_basename}.m2.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: mutect2_docker
         cpu: gatk_cpu
         memory: gatk_mem + " GB"
         disks: "local-disk " + disk + " HDD"
