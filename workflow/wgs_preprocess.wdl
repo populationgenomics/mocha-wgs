@@ -7,19 +7,9 @@ version 1.0
 # This workflow is designed to preprocess WGS data for MoChA analysis.
 # The inputs to the workflow are a CRAM or BAM file and a gVCF.
 #
-# The workflow will run the CRAM/BAM alignments through Mutect2 v4.0.12.0
-# for calculating allelic depths. The use of Mutect2 and this specific
-# GATK version is due to a strict requirement for potentially overlapping
-# read pairs to be counted once per site, which later versions of GATK and
-# the HaplotyperCaller program do not do.
-#
 # The gVCF will be processed through GATK's GenotypeGVCFs to generate a VCF.
 # The VCF will first be processed through the mochatools bcftools plugin to
 # add GC content annotations to the VCF.
-#
-# Finally, the AD information from the Mutect2 output will be used to annotate
-# the VCF with allelic depths. The resulting VCF will have GT, GC, and AD
-# information, which is required by the MoChA analysis workflow.
 
 workflow MochaWgsPreprocess {
     input {
@@ -58,8 +48,6 @@ workflow MochaWgsPreprocess {
         Int disk = 100
         Int boot_disk_size = 12
     }
-
-    String mutect2_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.0.12.0"
 
     call SplitIntervals {
         input:
