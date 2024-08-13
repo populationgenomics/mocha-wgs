@@ -696,3 +696,92 @@ task MochaAddGcContent {
         bootDiskSizeGb: boot_disk_size
     }
 }
+
+task MochaCorrectAD {
+    input {
+        File vcf
+        File vcf_index
+        File cram
+        File cram_index
+        File ref_fasta
+        File ref_fai
+        String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int gatk_cpu = 4
+        Int gatk_mem = 10
+        Int gatk_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
+    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+    String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") "--ploidy ~{ref_name}" else ""
+
+    command <<<
+        # Generate a sites-only VCF from the original VCF
+        bcftools view \
+            -G \
+            ~{vcf} | \
+        bcftools annotate \
+            -x INFO
+            -Oz \
+            -o ~{vcf_basename}.sites_only.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.sites_only.vcf.gz
+
+        # Get sample name
+        SAMPLE="$(bcftools query -l ~{vcf})"
+        echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
+        
+        # Run bcftools mpileup and call to generate GT and AD fields
+        bcftools mpileup \
+            -d 8000 \
+            -a "FORMAT/DP,FORMAT/AD" \
+            -f ~{ref_fasta} \
+            -R ~{vcf_basename}.sites_only.vcf.gz \
+            ~{cram} | \
+        bcftools call \
+            -mv \
+            ~{ploidy} \
+            -Oz | \
+        bcftools norm \
+            --fasta-ref ~{ref_fasta} \
+        bcftools reheader \
+            -s sample_name.bcftools.txt \
+            -o ~{vcf_basename}.mpileup.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+
+        # Create minimal VCFs
+        bcftools annotate \
+            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
+            -Oz \
+            -o ~{vcf_basename}.minimal.vcf.gz \
+            ~{vcf}
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.minimal.vcf.gz
+        bcftools annotate \
+            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
+            -Oz \
+            -o ~{vcf_basename}.mpileup.minimal.vcf.gz \
+            ~{vcf_basename}.mpileup.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.minimal.vcf.gz
+
+        # Merge the minimal VCFs
+        bcftools merge \
+            -m both \
+            -Oz \
+            -o ~{vcf_basename}.merged.minimal.vcf.gz \
+            ~{vcf_basename}.minimal.vcf.gz \
+            ~{vcf_basename}.mpileup.minimal.vcf.gz
+    >>>
+
+    output {
+        File corrected_vcf = "~{vcf_basename}.ad_corrected.vcf.gz"
+        File corrected_vcf_index = "~{vcf_basename}.ad_corrected.vcf.gz.tbi"
+        File bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+    }
+}
