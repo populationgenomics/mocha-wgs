@@ -720,7 +720,7 @@ task MochaCorrectAD {
 
     Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-    String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") "--ploidy ~{ref_name}" else ""
+    String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
 
     command <<<
         # Generate a sites-only VCF from the original VCF
@@ -769,13 +769,67 @@ task MochaCorrectAD {
             ~{vcf_basename}.mpileup.vcf.gz
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.minimal.vcf.gz
 
-        # Merge the minimal VCFs
+        # Merge the minimal VCFs and correct the AD and DP fields
         bcftools merge \
             -m both \
-            -Oz \
-            -o ~{vcf_basename}.merged.minimal.vcf.gz \
             ~{vcf_basename}.minimal.vcf.gz \
-            ~{vcf_basename}.mpileup.minimal.vcf.gz
+            ~{vcf_basename}.mpileup.minimal.vcf.gz | \
+        bcftools view -H | \
+        gawk -v FS="\t" -v OFS="\t" '
+        BEGIN {
+            fmt = "GT:AD:DP";
+        }
+        {
+            if ($9 == fmt) {
+                ad_idx = 2;
+                dp_idx = 3;
+            } else {
+                split($9, fmt_field, ":");
+                for (i = 1; i <= length(fmt_field); i++) {
+                    if (fmt_field[i] == "AD") {
+                        ad_idx = i;
+                    } else if (fmt_field[i] == "DP") {
+                        dp_idx = i;
+                    }
+                }
+            }
+
+            split($10, fmt_orig, ":");
+            split(fmt_orig[ad_idx], ad_orig, ",");
+            dp_orig = fmt_orig[dp_idx];
+            
+            split($11, fmt_bcf, ":");
+            split(fmt_bcf[ad_idx], ad_bcf, ",");
+            dp_bcf = fmt_bcf[dp_idx];
+
+            use_bcftools = 1;
+            if (dp_bcf !~ /^[0-9]+$/) {
+                use_bcftools = 0;
+            }
+            for (i = 1; i <= length(ad_bcf); i++) {
+                if (ad_bcf[i] !~ /^[0-9]+$/) {
+                    use_bcftools = 0;
+                    break;
+                }
+            }
+
+            if (use_bcftools) {
+                print $1, $2, ".", $4, $5, ".", ".", ".", "AD:DP", (fmt_bcf[ad_idx] ":" dp_bcf);
+            }
+        }
+        ' > ~{vcf_basename}.annotations.vcf.body
+        cat <(bcftools view -h ~{vcf}) ~{vcf_basename}.annotations.vcf.body > ~{vcf_basename}.annotations.vcf
+        bgzip -c ~{vcf_basename}.annotations.vcf > ~{vcf_basename}.annotations.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.annotations.vcf.gz
+
+        # Annotate input VCF with new AD and DP values
+        bcftools annotate \
+            -Oz \
+            -o ~{vcf_basename}.ad_corrected.vcf.gz \
+            -a ~{vcf_basename}.annotations.vcf.gz \
+            -c "FMT/AD,FMT/DP" \
+            ~{vcf}
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.ad_corrected.vcf.gz
     >>>
 
     output {
@@ -783,5 +837,7 @@ task MochaCorrectAD {
         File corrected_vcf_index = "~{vcf_basename}.ad_corrected.vcf.gz.tbi"
         File bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
         File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+        File annotations_vcf = "~{vcf_basename}.annotations.vcf.gz"
+        File annotations_vcf_index = "~{vcf_basename}.annotations.vcf.gz.tbi"
     }
 }
