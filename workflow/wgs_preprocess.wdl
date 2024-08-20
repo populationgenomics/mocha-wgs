@@ -751,7 +751,7 @@ task MochaCorrectAD {
             -G \
             ~{vcf} | \
         bcftools annotate \
-            -x INFO
+            -x INFO \
             -Oz \
             -o ~{vcf_basename}.sites_only.vcf.gz
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.sites_only.vcf.gz
