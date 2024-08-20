@@ -20,6 +20,7 @@ workflow MochaWgsPreprocess {
         File ref_fasta
         File ref_fai
         File ref_dict
+        String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
         File intervals
         Int scatter_count = 10
         File hapmap
@@ -45,6 +46,9 @@ workflow MochaWgsPreprocess {
         Int gatk_cpu = 4
         Int gatk_mem = 10
         Int gatk_mem_padding = 1
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
@@ -211,9 +215,28 @@ workflow MochaWgsPreprocess {
             mochatools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaCorrectAD {
+        input:
+            vcf = MochaAddGcContent.gc_vcf,
+            vcf_index = MochaAddGcContent.gc_vcf_index,
+            cram = alignments,
+            cram_index = alignments_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            ref_name = ref_name,
+            bcftools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
             disk = disk,
             boot_disk_size = boot_disk_size
     }
@@ -224,8 +247,8 @@ workflow MochaWgsPreprocess {
         File genotyped_vcf_index = MergeGenotypedVcfs.merged_vcf_index
         File filtered_vcf = MochaApplyVqsr.vqsr_vcf
         File filtered_vcf_index = MochaApplyVqsr.vqsr_vcf_index
-        File mocha_ready_vcf = MochaAddGcContent.gc_vcf
-        File mocha_ready_vcf_index = MochaAddGcContent.gc_vcf_index
+        File mocha_ready_vcf = MochaCorrectAD.corrected_vcf
+        File mocha_ready_vcf_index = MochaCorrectAD.corrected_vcf_index
     }
 }
 
@@ -658,14 +681,14 @@ task MochaAddGcContent {
         String mochatools_docker
         Int preemptible = 2
         Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
 
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
 
     command <<<
@@ -688,8 +711,8 @@ task MochaAddGcContent {
 
     runtime {
         docker: mochatools_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
         disks: "local-disk " + disk + " HDD"
         preemptible: preemptible
         maxRetries: max_retries
@@ -711,14 +734,14 @@ task MochaCorrectAD {
         String bcftools_docker
         Int preemptible = 2
         Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
 
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
     String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
 
@@ -839,5 +862,15 @@ task MochaCorrectAD {
         File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
         File annotations_vcf = "~{vcf_basename}.annotations.vcf.gz"
         File annotations_vcf_index = "~{vcf_basename}.annotations.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
     }
 }
