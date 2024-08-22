@@ -21,7 +21,9 @@ workflow MochaWgsPreprocess {
         File ref_fai
         File ref_dict
         String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
+        Array[String] chromosomes = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrX", "chrY", "chrM"]
         File intervals
+        File? samples_file
         Int scatter_count = 10
         File hapmap
         File hapmap_index
@@ -222,15 +224,48 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
+    scatter(chrom in chromosomes) {
+        call MochaBcftoolsMpileup {
+            input:
+                vcf = MochaAddGcContent.gc_vcf,
+                vcf_index = MochaAddGcContent.gc_vcf_index,
+                cram = alignments,
+                cram_index = alignments_index,
+                samples = samples_file,
+                regions = chrom,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                ref_name = ref_name,
+                bcftools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
+
+        Array[File] mpileup_vcf_index_pairs = [MochaBcftoolsMpileup.bcftools_vcf, MochaBcftoolsMpileup.bcftools_vcf_index]
+    }
+    
+    call MochaConcatChrVCFs {
+        input:
+            vcf_index_pairs = mpileup_vcf_index_pairs,
+            bcftools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
     call MochaCorrectAD {
         input:
-            vcf = MochaAddGcContent.gc_vcf,
-            vcf_index = MochaAddGcContent.gc_vcf_index,
-            cram = alignments,
-            cram_index = alignments_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            ref_name = ref_name,
+            vcf = MochaConcatChrVCFs.concat_vcf,
+            vcf_index = MochaConcatChrVCFs.concat_vcf_index,
             bcftools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -720,12 +755,14 @@ task MochaAddGcContent {
     }
 }
 
-task MochaCorrectAD {
+task MochaBcftoolsMpileup {
     input {
         File vcf
         File vcf_index
         File cram
         File cram_index
+        File? samples
+        String? regions
         File ref_fasta
         File ref_fai
         String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
@@ -744,11 +781,14 @@ task MochaCorrectAD {
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
     String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
+    String samples_param = if (defined(samples)) then "--samples ~{samples}" else ""
+    String regions_param = if (defined(regions)) then "-r ~{regions}" else ""
 
     command <<<
         # Generate a sites-only VCF from the original VCF
         bcftools view \
             -G \
+            ~{regions_param} \
             ~{vcf} | \
         bcftools annotate \
             -x INFO \
@@ -770,14 +810,104 @@ task MochaCorrectAD {
         bcftools call \
             -mv \
             ~{ploidy} \
-            -Oz | \
+            ~{samples_param} \
+            -Oz \
+            -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
         bcftools norm \
-            --fasta-ref ~{ref_fasta} | \
+            --fasta-ref ~{ref_fasta} \
+            ~{vcf_basename}.mpileup.unnorm.vcf.gz \
+            -Oz \
+            -o ~{vcf_basename}.mpileup.norm.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.norm.vcf.gz
         bcftools reheader \
             -s sample_name.bcftools.txt \
-            -o ~{vcf_basename}.mpileup.vcf.gz
+            -Oz \
+            -o ~{vcf_basename}.mpileup.vcf.gz \
+            ~{vcf_basename}.mpileup.norm.vcf.gz
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+    >>>
 
+    output {
+        File bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaConcatChrVCFs {
+    input {
+        Array[Array[File]] vcf_index_pairs
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String vcf_basename = basename(basename(vcf_index_pairs[0][0], ".gz"), ".vcf")
+    Array[File] vcfs = transpose(vcf_index_pairs)[0]
+
+    command <<<
+        bcftools concat \
+            -a \
+            -Oz \
+            -o ~{vcf_basename}.mpileup.vcf.gz \
+            ~{sep=" " vcfs}
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+    >>>
+
+    output {
+        File concat_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File concat_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaCorrectAD {
+    input {
+        File vcf
+        File vcf_index
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+
+    command <<<
         # Create minimal VCFs
         bcftools annotate \
             -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
@@ -858,8 +988,6 @@ task MochaCorrectAD {
     output {
         File corrected_vcf = "~{vcf_basename}.ad_corrected.vcf.gz"
         File corrected_vcf_index = "~{vcf_basename}.ad_corrected.vcf.gz.tbi"
-        File bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
-        File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
         File annotations_vcf = "~{vcf_basename}.annotations.vcf.gz"
         File annotations_vcf_index = "~{vcf_basename}.annotations.vcf.gz.tbi"
     }
