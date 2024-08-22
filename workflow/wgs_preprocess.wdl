@@ -772,7 +772,7 @@ task MochaCorrectAD {
             ~{ploidy} \
             -Oz | \
         bcftools norm \
-            --fasta-ref ~{ref_fasta} \
+            --fasta-ref ~{ref_fasta} | \
         bcftools reheader \
             -s sample_name.bcftools.txt \
             -o ~{vcf_basename}.mpileup.vcf.gz
