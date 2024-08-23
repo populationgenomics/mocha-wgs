@@ -822,7 +822,6 @@ task MochaBcftoolsMpileup {
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.norm.vcf.gz
         bcftools reheader \
             -s sample_name.bcftools.txt \
-            -Oz \
             -o ~{vcf_basename}.mpileup.vcf.gz \
             ~{vcf_basename}.mpileup.norm.vcf.gz
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
