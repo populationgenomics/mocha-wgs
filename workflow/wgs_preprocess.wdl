@@ -245,13 +245,15 @@ workflow MochaWgsPreprocess {
                 disk = disk,
                 boot_disk_size = boot_disk_size
         }
-
-        Array[File] mpileup_vcf_index_pairs = [MochaBcftoolsMpileup.bcftools_vcf, MochaBcftoolsMpileup.bcftools_vcf_index]
     }
+
+    Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
+    Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
     
     call MochaConcatChrVCFs {
         input:
-            vcf_index_pairs = mpileup_vcf_index_pairs,
+            vcfs = mpileup_vcfs,
+            vcf_indexes = mpileup_vcf_indexes,
             bcftools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -796,40 +798,45 @@ task MochaBcftoolsMpileup {
             -o ~{vcf_basename}.sites_only.vcf.gz
         tabix -s 1 -b 2 -e 2 ~{vcf_basename}.sites_only.vcf.gz
 
-        # Get sample name
-        SAMPLE="$(bcftools query -l ~{vcf})"
-        echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
-        
-        # Run bcftools mpileup and call to generate GT and AD fields
-        bcftools mpileup \
-            -d 8000 \
-            -a "FORMAT/DP,FORMAT/AD" \
-            -f ~{ref_fasta} \
-            -R ~{vcf_basename}.sites_only.vcf.gz \
-            ~{cram} | \
-        bcftools call \
-            -mv \
-            ~{ploidy} \
-            ~{samples_param} \
-            -Oz \
-            -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
-        bcftools norm \
-            --fasta-ref ~{ref_fasta} \
-            ~{vcf_basename}.mpileup.unnorm.vcf.gz \
-            -Oz \
-            -o ~{vcf_basename}.mpileup.norm.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.norm.vcf.gz
-        bcftools reheader \
-            -s sample_name.bcftools.txt \
-            -o ~{vcf_basename}.mpileup.vcf.gz \
-            ~{vcf_basename}.mpileup.norm.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+        # Only proceed if there are variant sites in the VCF
+        NOTEMPTY="$(bcftools view -H ~{vcf_basename}.sites_only.vcf.gz | head -n 1 | wc -l)"
+        if [ "$NOTEMPTY" -eq "1" ]
+        then
+            # Get sample name
+            SAMPLE="$(bcftools query -l ~{vcf})"
+            echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
+            
+            # Run bcftools mpileup and call to generate GT and AD fields
+            bcftools mpileup \
+                -d 8000 \
+                -a "FORMAT/DP,FORMAT/AD" \
+                -f ~{ref_fasta} \
+                -R ~{vcf_basename}.sites_only.vcf.gz \
+                ~{cram} | \
+            bcftools call \
+                -mv \
+                ~{ploidy} \
+                ~{samples_param} \
+                -Oz \
+                -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
+            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
+            bcftools norm \
+                --fasta-ref ~{ref_fasta} \
+                ~{vcf_basename}.mpileup.unnorm.vcf.gz \
+                -Oz \
+                -o ~{vcf_basename}.mpileup.norm.vcf.gz
+            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.norm.vcf.gz
+            bcftools reheader \
+                -s sample_name.bcftools.txt \
+                -o ~{vcf_basename}.mpileup.vcf.gz \
+                ~{vcf_basename}.mpileup.norm.vcf.gz
+            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+        fi
     >>>
 
     output {
-        File bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
-        File bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+        File? bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File? bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
     }
 
     runtime {
@@ -845,7 +852,8 @@ task MochaBcftoolsMpileup {
 
 task MochaConcatChrVCFs {
     input {
-        Array[Array[File]] vcf_index_pairs
+        Array[File] vcfs
+        Array[File] vcf_indexes
 
         # Runtime options
         String bcftools_docker
@@ -860,7 +868,6 @@ task MochaConcatChrVCFs {
 
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf_index_pairs[0][0], ".gz"), ".vcf")
-    Array[File] vcfs = transpose(vcf_index_pairs)[0]
 
     command <<<
         bcftools concat \
