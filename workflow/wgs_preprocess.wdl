@@ -867,7 +867,7 @@ task MochaConcatChrVCFs {
     }
 
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf_index_pairs[0][0], ".gz"), ".vcf")
+    String vcf_basename = basename(basename(vcfs[0], ".gz"), ".vcf")
 
     command <<<
         bcftools concat \
