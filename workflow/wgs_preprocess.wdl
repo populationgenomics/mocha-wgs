@@ -931,7 +931,7 @@ task MochaCorrectAD {
             -Oz \
             -o ~{mpileup_vcf_basename}.minimal.vcf.gz \
             ~{mpileup_vcf}
-        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.mpileup.minimal.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.minimal.vcf.gz
 
         # Merge the minimal VCFs and correct the AD and DP fields
         bcftools merge \
