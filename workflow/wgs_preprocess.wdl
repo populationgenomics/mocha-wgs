@@ -266,8 +266,10 @@ workflow MochaWgsPreprocess {
 
     call MochaCorrectAD {
         input:
-            vcf = MochaConcatChrVCFs.concat_vcf,
-            vcf_index = MochaConcatChrVCFs.concat_vcf_index,
+            original_vcf = MochaAddGcContent.gc_vcf,
+            original_vcf_index = MochaAddGcContent.gc_vcf_index,
+            mpileup_vcf = MochaConcatChrVCFs.concat_vcf,
+            mpileup_vcf_index = MochaConcatChrVCFs.concat_vcf_index,
             bcftools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -896,8 +898,10 @@ task MochaConcatChrVCFs {
 
 task MochaCorrectAD {
     input {
-        File vcf
-        File vcf_index
+        File original_vcf
+        File original_vcf_index
+        File mpileup_vcf
+        File mpileup_vcf_index
 
         # Runtime options
         String bcftools_docker
@@ -911,28 +915,29 @@ task MochaCorrectAD {
     }
 
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+    String original_vcf_basename = basename(basename(original_vcf, ".gz"), ".vcf")
+    String mpileup_vcf_basename = basename(basename(mpileup_vcf, ".gz"), ".vcf")
 
     command <<<
         # Create minimal VCFs
         bcftools annotate \
             -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
             -Oz \
-            -o ~{vcf_basename}.minimal.vcf.gz \
-            ~{vcf}
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.minimal.vcf.gz
+            -o ~{original_vcf_basename}.minimal.vcf.gz \
+            ~{original_vcf}
+        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.minimal.vcf.gz
         bcftools annotate \
             -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
             -Oz \
-            -o ~{vcf_basename}.mpileup.minimal.vcf.gz \
-            ~{vcf_basename}.mpileup.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.minimal.vcf.gz
+            -o ~{mpileup_vcf_basename}.minimal.vcf.gz \
+            ~{mpileup_vcf}
+        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.mpileup.minimal.vcf.gz
 
         # Merge the minimal VCFs and correct the AD and DP fields
         bcftools merge \
             -m both \
-            ~{vcf_basename}.minimal.vcf.gz \
-            ~{vcf_basename}.mpileup.minimal.vcf.gz | \
+            ~{original_vcf_basename}.minimal.vcf.gz \
+            ~{mpileup_vcf_basename}.minimal.vcf.gz | \
         bcftools view -H | \
         gawk -v FS="\t" -v OFS="\t" '
         BEGIN {
@@ -976,26 +981,26 @@ task MochaCorrectAD {
                 print $1, $2, ".", $4, $5, ".", ".", ".", "AD:DP", (fmt_bcf[ad_idx] ":" dp_bcf);
             }
         }
-        ' > ~{vcf_basename}.annotations.vcf.body
-        cat <(bcftools view -h ~{vcf}) ~{vcf_basename}.annotations.vcf.body > ~{vcf_basename}.annotations.vcf
-        bgzip -c ~{vcf_basename}.annotations.vcf > ~{vcf_basename}.annotations.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.annotations.vcf.gz
+        ' > ~{mpileup_vcf_basename}.annotations.vcf.body
+        cat <(bcftools view -h ~{original_vcf}) ~{mpileup_vcf_basename}.annotations.vcf.body > ~{mpileup_vcf_basename}.annotations.vcf
+        bgzip -c ~{mpileup_vcf_basename}.annotations.vcf > ~{mpileup_vcf_basename}.annotations.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.annotations.vcf.gz
 
         # Annotate input VCF with new AD and DP values
         bcftools annotate \
             -Oz \
-            -o ~{vcf_basename}.ad_corrected.vcf.gz \
-            -a ~{vcf_basename}.annotations.vcf.gz \
+            -o ~{original_vcf_basename}.ad_corrected.vcf.gz \
+            -a ~{mpileup_vcf_basename}.annotations.vcf.gz \
             -c "FMT/AD,FMT/DP" \
-            ~{vcf}
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.ad_corrected.vcf.gz
+            ~{original_vcf}
+        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.ad_corrected.vcf.gz
     >>>
 
     output {
-        File corrected_vcf = "~{vcf_basename}.ad_corrected.vcf.gz"
-        File corrected_vcf_index = "~{vcf_basename}.ad_corrected.vcf.gz.tbi"
-        File annotations_vcf = "~{vcf_basename}.annotations.vcf.gz"
-        File annotations_vcf_index = "~{vcf_basename}.annotations.vcf.gz.tbi"
+        File corrected_vcf = "~{original_vcf_basename}.ad_corrected.vcf.gz"
+        File corrected_vcf_index = "~{original_vcf_basename}.ad_corrected.vcf.gz.tbi"
+        File annotations_vcf = "~{mpileup_vcf_basename}.annotations.vcf.gz"
+        File annotations_vcf_index = "~{mpileup_vcf_basename}.annotations.vcf.gz.tbi"
     }
 
     runtime {
