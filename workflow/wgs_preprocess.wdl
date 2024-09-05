@@ -208,27 +208,11 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
-    call MochaAddGcContent {
-        input:
-            vcf = MochaApplyVqsr.vqsr_vcf,
-            vcf_index = MochaApplyVqsr.vqsr_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            mochatools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
-
     scatter(chrom in chromosomes) {
         call MochaBcftoolsMpileup {
             input:
-                vcf = MochaAddGcContent.gc_vcf,
-                vcf_index = MochaAddGcContent.gc_vcf_index,
+                vcf = MochaApplyVqsr.vqsr_vcf,
+                vcf_index = MochaApplyVqsr.vqsr_vcf_index,
                 cram = alignments,
                 cram_index = alignments_index,
                 samples = samples_file,
@@ -250,7 +234,7 @@ workflow MochaWgsPreprocess {
     Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
     Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
     
-    call MochaConcatChrVCFs {
+    call MochaConcatMpileupChrVCFs {
         input:
             vcfs = mpileup_vcfs,
             vcf_indexes = mpileup_vcf_indexes,
@@ -264,12 +248,44 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
-    call MochaCorrectAD {
+    call MochaAddGcContent as MochaAddGcContentOriginal {
         input:
-            original_vcf = MochaAddGcContent.gc_vcf,
-            original_vcf_index = MochaAddGcContent.gc_vcf_index,
-            mpileup_vcf = MochaConcatChrVCFs.concat_vcf,
-            mpileup_vcf_index = MochaConcatChrVCFs.concat_vcf_index,
+            vcf = MochaApplyVqsr.vqsr_vcf,
+            vcf_index = MochaApplyVqsr.vqsr_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            mochatools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaAddGcContent as MochaAddGcContentMpileup {
+        input:
+            vcf = MochaConcatMpileupChrVCFs.concat_vcf,
+            vcf_index = MochaConcatMpileupChrVCFs.concat_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            mochatools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaFilterVcf as MochaFilterVcfOriginal {
+        input:
+            vcf = MochaAddGcContentOriginal.gc_vcf,
+            vcf_index = MochaAddGcContentOriginal.gc_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
             bcftools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
@@ -280,10 +296,10 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
-    call MochaFilterVcf {
+    call MochaFilterVcf as MochaFilterVcfMpileup {
         input:
-            vcf = MochaCorrectAD.corrected_vcf,
-            vcf_index = MochaCorrectAD.corrected_vcf_index,
+            vcf = MochaAddGcContentMpileup.gc_vcf,
+            vcf_index = MochaAddGcContentMpileup.gc_vcf_index,
             ref_fasta = ref_fasta,
             ref_fai = ref_fai,
             bcftools_docker = mochatools_docker,
@@ -302,10 +318,10 @@ workflow MochaWgsPreprocess {
         File genotyped_vcf_index = MergeGenotypedVcfs.merged_vcf_index
         File filtered_vcf = MochaApplyVqsr.vqsr_vcf
         File filtered_vcf_index = MochaApplyVqsr.vqsr_vcf_index
-        File corrected_vcf = MochaCorrectAD.corrected_vcf
-        File corrected_vcf_index = MochaCorrectAD.corrected_vcf_index
-        File mocha_ready_vcf = MochaFilterVcf.mocha_filtered_vcf
-        File mocha_ready_vcf_index = MochaFilterVcf.mocha_filtered_vcf_index
+        File mocha_ready_gatk_vcf = MochaFilterVcfOriginal.mocha_filtered_vcf
+        File mocha_ready_gatk_vcf_index = MochaFilterVcfOriginal.mocha_filtered_vcf_index
+        File mocha_ready_mpileup_vcf = MochaFilterVcfMpileup.mocha_filtered_vcf
+        File mocha_ready_mpileup_vcf_index = MochaFilterVcfMpileup.mocha_filtered_vcf_index
     }
 }
 
@@ -822,10 +838,6 @@ task MochaBcftoolsMpileup {
         NOTEMPTY="$(bcftools view -H ~{vcf_basename}.sites_only.vcf.gz | head -n 1 | wc -l)"
         if [ "$NOTEMPTY" -eq "1" ]
         then
-            # Get sample name
-            SAMPLE="$(bcftools query -l ~{vcf})"
-            echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
-            
             # Run bcftools mpileup and call to generate GT and AD fields
             bcftools mpileup \
                 -d 8000 \
@@ -844,12 +856,7 @@ task MochaBcftoolsMpileup {
                 --fasta-ref ~{ref_fasta} \
                 ~{vcf_basename}.mpileup.unnorm.vcf.gz \
                 -Oz \
-                -o ~{vcf_basename}.mpileup.norm.vcf.gz
-            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.norm.vcf.gz
-            bcftools reheader \
-                -s sample_name.bcftools.txt \
-                -o ~{vcf_basename}.mpileup.vcf.gz \
-                ~{vcf_basename}.mpileup.norm.vcf.gz
+                -o ~{vcf_basename}.mpileup.vcf.gz
             tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
         fi
     >>>
@@ -870,7 +877,7 @@ task MochaBcftoolsMpileup {
     }
 }
 
-task MochaConcatChrVCFs {
+task MochaConcatMpileupChrVCFs {
     input {
         Array[File] vcfs
         Array[File] vcf_indexes
@@ -887,7 +894,7 @@ task MochaConcatChrVCFs {
     }
 
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcfs[0], ".gz"), ".vcf")
+    String vcf_basename = basename(basename(basename(vcfs[0], ".gz"), ".vcf"), ".mpileup")
 
     command <<<
         bcftools concat \
@@ -938,17 +945,24 @@ task MochaCorrectAD {
 
     command <<<
         # Create minimal VCFs
+        # Original VCF
         bcftools annotate \
             -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
             -Oz \
             -o ~{original_vcf_basename}.minimal.vcf.gz \
             ~{original_vcf}
         tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.minimal.vcf.gz
+
+        # mpileup VCF - also reheader with '_BCFTOOLS' suffix to sample name
+        SAMPLE="$(bcftools query -l ~{mpileup_vcf})"
+        echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
         bcftools annotate \
             -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
+            ~{mpileup_vcf} | \
+        bcftools reheader \
+            -s sample_name.bcftools.txt \
             -Oz \
             -o ~{mpileup_vcf_basename}.minimal.vcf.gz \
-            ~{mpileup_vcf}
         tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.minimal.vcf.gz
 
         # Merge the minimal VCFs and correct the AD and DP fields
