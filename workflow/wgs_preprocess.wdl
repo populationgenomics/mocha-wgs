@@ -841,7 +841,7 @@ task MochaBcftoolsMpileup {
             # Run bcftools mpileup and call to generate GT and AD fields
             bcftools mpileup \
                 -d 8000 \
-                -a "FORMAT/DP,FORMAT/AD" \
+                -a "FORMAT/DP,FORMAT/AD,FORMAT/GQ" \
                 -f ~{ref_fasta} \
                 -R ~{vcf_basename}.sites_only.vcf.gz \
                 ~{cram} | \
