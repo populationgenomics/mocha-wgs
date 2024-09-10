@@ -819,7 +819,7 @@ task MochaBcftoolsMpileup {
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
     String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
-    String samples_param = if (defined(samples)) then "--samples ~{samples}" else ""
+    String samples_param = if (defined(samples)) then "--samples-file ~{samples}" else ""
     String regions_param = if (defined(regions)) then "-r ~{regions}" else ""
 
     command <<<

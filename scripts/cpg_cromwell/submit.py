@@ -4,21 +4,19 @@ Submit the full pipeline to cromwell via hail batch
 import hailtop.batch as hb
 from hailtop.batch import Resource
 from hailtop.batch.job import Job
-from cpg_utils.hail_batch import get_batch
 from cpg_utils.config import get_config
-from cpg_utils.hail_batch import remote_tmpdir
-from analysis_runner.cromwell import (
+from cpg_utils.cromwell import (
     run_cromwell_workflow,
 )
 import toml
 import os
 from typing import List, Dict, Optional, Any
-from analysis_runner.git import (
-    get_git_default_remote,
+from cpg_utils.git import (
     get_git_commit_ref_of_current_repository,
+    get_git_default_remote,
     get_repo_name_from_remote,
-    prepare_git_job,
 )
+from cpg_utils.hail_batch import get_batch, prepare_git_job
 
 
 def submit_cromwell_workflow(
