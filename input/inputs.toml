@@ -1,0 +1,44 @@
+[workflow]
+dataset = ''
+access_level = 'test'
+name = 'mocha_wgs_preprocessing'
+
+[mocha_wgs]
+alignments = "REQUIRED_FILE"
+alignments_index = "REQUIRED_FILE"
+gvcf = "REQUIRED_FILE"
+gvcf_index = "REQUIRED_FILE"
+ref_fasta = "REQUIRED_FILE"
+ref_fai = "REQUIRED_FILE"
+ref_dict = "REQUIRED_FILE"
+ref_name = "GRCh38"
+chromosomes = [ "chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrX", "chrY", "chrM" ]
+intervals = "REQUIRED_FILE"
+samples_file = "OPTIONAL_FILE"
+scatter_count = 10
+hapmap = "REQUIRED_FILE"
+hapmap_index = "REQUIRED_FILE"
+omni = "REQUIRED_FILE"
+omni_index = "REQUIRED_FILE"
+g1000 = "REQUIRED_FILE"
+g1000_index = "REQUIRED_FILE"
+dbsnp = "REQUIRED_FILE"
+dbsnp_index = "REQUIRED_FILE"
+mills = "REQUIRED_FILE"
+mills_index = "REQUIRED_FILE"
+axiom_poly = "REQUIRED_FILE"
+axiom_poly_index = "REQUIRED_FILE"
+snps_max_gaussians = 6
+indels_max_gaussians = 4
+gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
+mochatools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/mochatools:latest"
+preemptible = 2
+max_retries = 2
+gatk_cpu = 4
+gatk_mem = 10
+gatk_mem_padding = 1
+bcftools_cpu = 4
+bcftools_mem = 10
+bcftools_mem_padding = 1
+disk = 100
+boot_disk_size = 12

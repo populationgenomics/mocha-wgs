@@ -20,7 +20,10 @@ workflow MochaWgsPreprocess {
         File ref_fasta
         File ref_fai
         File ref_dict
+        String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
+        Array[String] chromosomes = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrX", "chrY", "chrM"]
         File intervals
+        File? samples_file
         Int scatter_count = 10
         File hapmap
         File hapmap_index
@@ -45,6 +48,9 @@ workflow MochaWgsPreprocess {
         Int gatk_cpu = 4
         Int gatk_mem = 10
         Int gatk_mem_padding = 1
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
@@ -202,7 +208,47 @@ workflow MochaWgsPreprocess {
             boot_disk_size = boot_disk_size
     }
 
-    call MochaAddGcContent {
+    scatter(chrom in chromosomes) {
+        call MochaBcftoolsMpileup {
+            input:
+                vcf = MochaApplyVqsr.vqsr_vcf,
+                vcf_index = MochaApplyVqsr.vqsr_vcf_index,
+                cram = alignments,
+                cram_index = alignments_index,
+                samples = samples_file,
+                regions = chrom,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                ref_name = ref_name,
+                bcftools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
+    }
+
+    Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
+    Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
+    
+    call MochaConcatMpileupChrVCFs {
+        input:
+            vcfs = mpileup_vcfs,
+            vcf_indexes = mpileup_vcf_indexes,
+            bcftools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaAddGcContent as MochaAddGcContentOriginal {
         input:
             vcf = MochaApplyVqsr.vqsr_vcf,
             vcf_index = MochaApplyVqsr.vqsr_vcf_index,
@@ -211,9 +257,57 @@ workflow MochaWgsPreprocess {
             mochatools_docker = mochatools_docker,
             preemptible = preemptible,
             max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaAddGcContent as MochaAddGcContentMpileup {
+        input:
+            vcf = MochaConcatMpileupChrVCFs.concat_vcf,
+            vcf_index = MochaConcatMpileupChrVCFs.concat_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            mochatools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaFilterVcf as MochaFilterVcfOriginal {
+        input:
+            vcf = MochaAddGcContentOriginal.gc_vcf,
+            vcf_index = MochaAddGcContentOriginal.gc_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            bcftools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
+            disk = disk,
+            boot_disk_size = boot_disk_size
+    }
+
+    call MochaFilterVcf as MochaFilterVcfMpileup {
+        input:
+            vcf = MochaAddGcContentMpileup.gc_vcf,
+            vcf_index = MochaAddGcContentMpileup.gc_vcf_index,
+            ref_fasta = ref_fasta,
+            ref_fai = ref_fai,
+            bcftools_docker = mochatools_docker,
+            preemptible = preemptible,
+            max_retries = max_retries,
+            bcftools_cpu = bcftools_cpu,
+            bcftools_mem = bcftools_mem,
+            bcftools_mem_padding = bcftools_mem_padding,
             disk = disk,
             boot_disk_size = boot_disk_size
     }
@@ -224,8 +318,10 @@ workflow MochaWgsPreprocess {
         File genotyped_vcf_index = MergeGenotypedVcfs.merged_vcf_index
         File filtered_vcf = MochaApplyVqsr.vqsr_vcf
         File filtered_vcf_index = MochaApplyVqsr.vqsr_vcf_index
-        File mocha_ready_vcf = MochaAddGcContent.gc_vcf
-        File mocha_ready_vcf_index = MochaAddGcContent.gc_vcf_index
+        File mocha_ready_gatk_vcf = MochaFilterVcfOriginal.mocha_filtered_vcf
+        File mocha_ready_gatk_vcf_index = MochaFilterVcfOriginal.mocha_filtered_vcf_index
+        File mocha_ready_mpileup_vcf = MochaFilterVcfMpileup.mocha_filtered_vcf
+        File mocha_ready_mpileup_vcf_index = MochaFilterVcfMpileup.mocha_filtered_vcf_index
     }
 }
 
@@ -658,14 +754,14 @@ task MochaAddGcContent {
         String mochatools_docker
         Int preemptible = 2
         Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
 
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
     String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
 
     command <<<
@@ -688,8 +784,332 @@ task MochaAddGcContent {
 
     runtime {
         docker: mochatools_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaBcftoolsMpileup {
+    input {
+        File vcf
+        File vcf_index
+        File cram
+        File cram_index
+        File? samples
+        String? regions
+        File ref_fasta
+        File ref_fai
+        String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+    String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
+    String samples_param = if (defined(samples)) then "--samples-file ~{samples}" else ""
+    String regions_param = if (defined(regions)) then "-r ~{regions}" else ""
+
+    command <<<
+        # Generate a sites-only VCF from the original VCF
+        bcftools view \
+            -G \
+            ~{regions_param} \
+            ~{vcf} | \
+        bcftools annotate \
+            -x INFO \
+            -Oz \
+            -o ~{vcf_basename}.sites_only.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.sites_only.vcf.gz
+
+        # Only proceed if there are variant sites in the VCF
+        NOTEMPTY="$(bcftools view -H ~{vcf_basename}.sites_only.vcf.gz | head -n 1 | wc -l)"
+        if [ "$NOTEMPTY" -eq "1" ]
+        then
+            # Run bcftools mpileup and call to generate GT and AD fields
+            bcftools mpileup \
+                -d 8000 \
+                -a "FORMAT/DP,FORMAT/AD" \
+                -f ~{ref_fasta} \
+                -R ~{vcf_basename}.sites_only.vcf.gz \
+                ~{cram} | \
+            bcftools call \
+                -mv \
+                -f GQ \
+                ~{ploidy} \
+                ~{samples_param} \
+                -Oz \
+                -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
+            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
+            bcftools norm \
+                --fasta-ref ~{ref_fasta} \
+                ~{vcf_basename}.mpileup.unnorm.vcf.gz \
+                -Oz \
+                -o ~{vcf_basename}.mpileup.vcf.gz
+            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+        fi
+    >>>
+
+    output {
+        File? bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File? bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaConcatMpileupChrVCFs {
+    input {
+        Array[File] vcfs
+        Array[File] vcf_indexes
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String vcf_basename = basename(basename(basename(vcfs[0], ".gz"), ".vcf"), ".mpileup")
+
+    command <<<
+        bcftools concat \
+            -a \
+            -Oz \
+            -o ~{vcf_basename}.mpileup.vcf.gz \
+            ~{sep=" " vcfs}
+        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+    >>>
+
+    output {
+        File concat_vcf = "~{vcf_basename}.mpileup.vcf.gz"
+        File concat_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaCorrectAD {
+    input {
+        File original_vcf
+        File original_vcf_index
+        File mpileup_vcf
+        File mpileup_vcf_index
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String original_vcf_basename = basename(basename(original_vcf, ".gz"), ".vcf")
+    String mpileup_vcf_basename = basename(basename(mpileup_vcf, ".gz"), ".vcf")
+
+    command <<<
+        # Create minimal VCFs
+        # Original VCF
+        bcftools annotate \
+            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
+            -Oz \
+            -o ~{original_vcf_basename}.minimal.vcf.gz \
+            ~{original_vcf}
+        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.minimal.vcf.gz
+
+        # mpileup VCF - also reheader with '_BCFTOOLS' suffix to sample name
+        SAMPLE="$(bcftools query -l ~{mpileup_vcf})"
+        echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
+        bcftools annotate \
+            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
+            ~{mpileup_vcf} | \
+        bcftools reheader \
+            -s sample_name.bcftools.txt \
+            -Oz \
+            -o ~{mpileup_vcf_basename}.minimal.vcf.gz \
+        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.minimal.vcf.gz
+
+        # Merge the minimal VCFs and correct the AD and DP fields
+        bcftools merge \
+            -m both \
+            ~{original_vcf_basename}.minimal.vcf.gz \
+            ~{mpileup_vcf_basename}.minimal.vcf.gz | \
+        bcftools view -H | \
+        gawk -v FS="\t" -v OFS="\t" '
+        BEGIN {
+            fmt = "GT:AD:DP";
+        }
+        {
+            if ($9 == fmt) {
+                ad_idx = 2;
+                dp_idx = 3;
+            } else {
+                split($9, fmt_field, ":");
+                for (i = 1; i <= length(fmt_field); i++) {
+                    if (fmt_field[i] == "AD") {
+                        ad_idx = i;
+                    } else if (fmt_field[i] == "DP") {
+                        dp_idx = i;
+                    }
+                }
+            }
+
+            split($10, fmt_orig, ":");
+            split(fmt_orig[ad_idx], ad_orig, ",");
+            dp_orig = fmt_orig[dp_idx];
+            
+            split($11, fmt_bcf, ":");
+            split(fmt_bcf[ad_idx], ad_bcf, ",");
+            dp_bcf = fmt_bcf[dp_idx];
+
+            use_bcftools = 1;
+            if (dp_bcf !~ /^[0-9]+$/) {
+                use_bcftools = 0;
+            }
+            for (i = 1; i <= length(ad_bcf); i++) {
+                if (ad_bcf[i] !~ /^[0-9]+$/) {
+                    use_bcftools = 0;
+                    break;
+                }
+            }
+
+            if (use_bcftools) {
+                print $1, $2, ".", $4, $5, ".", ".", ".", "AD:DP", (fmt_bcf[ad_idx] ":" dp_bcf);
+            }
+        }
+        ' > ~{mpileup_vcf_basename}.annotations.vcf.body
+        cat <(bcftools view -h ~{original_vcf}) ~{mpileup_vcf_basename}.annotations.vcf.body > ~{mpileup_vcf_basename}.annotations.vcf
+        bgzip -c ~{mpileup_vcf_basename}.annotations.vcf > ~{mpileup_vcf_basename}.annotations.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.annotations.vcf.gz
+
+        # Annotate input VCF with new AD and DP values
+        bcftools annotate \
+            -Oz \
+            -o ~{original_vcf_basename}.ad_corrected.vcf.gz \
+            -a ~{mpileup_vcf_basename}.annotations.vcf.gz \
+            -c "FMT/AD,FMT/DP" \
+            ~{original_vcf}
+        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.ad_corrected.vcf.gz
+    >>>
+
+    output {
+        File corrected_vcf = "~{original_vcf_basename}.ad_corrected.vcf.gz"
+        File corrected_vcf_index = "~{original_vcf_basename}.ad_corrected.vcf.gz.tbi"
+        File annotations_vcf = "~{mpileup_vcf_basename}.annotations.vcf.gz"
+        File annotations_vcf_index = "~{mpileup_vcf_basename}.annotations.vcf.gz.tbi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
+task MochaFilterVcf {
+    input {
+        File vcf
+        File vcf_index
+        File ref_fasta
+        File ref_fai
+
+        # Runtime options
+        String bcftools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int bcftools_cpu = 4
+        Int bcftools_mem = 10
+        Int bcftools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
+    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+
+    command <<<
+        # Filter MoChA VCF
+        bcftools view \
+            --no-version \
+            -h \
+            ~{vcf} | \
+        sed 's/^\(##FORMAT=<ID=AD,Number=\)\./\1R/' | \
+        bcftools reheader \
+            -h \
+            /dev/stdin \
+            ~{vcf} | \
+        bcftools filter \
+            --no-version \
+            -Ou \
+            -e "FMT/DP<10 | FMT/GQ<20" \
+            --set-GT . | \
+        bcftools annotate \
+            --no-version \
+            -Ou \
+            -x ID,QUAL,^INFO/GC,^FMT/GT,^FMT/AD | \
+        bcftools norm \
+            --no-version \
+            -Ou \
+            -m -any \
+            --keep-sum AD | \
+        bcftools norm \
+            --no-version \
+            -Ob \
+            -o ~{vcf_basename}.filtered.minimal.bcf \
+            -f ~{ref_fasta} \
+            --write-index
+    >>>
+
+    output {
+        File mocha_filtered_vcf = "~{vcf_basename}.filtered.minimal.bcf"
+        File mocha_filtered_vcf_index = "~{vcf_basename}.filtered.minimal.bcf.csi"
+    }
+
+    runtime {
+        docker: bcftools_docker
+        cpu: bcftools_cpu
+        memory: bcftools_mem + " GB"
         disks: "local-disk " + disk + " HDD"
         preemptible: preemptible
         maxRetries: max_retries
