@@ -848,7 +848,7 @@ task MochaBcftoolsMpileup {
                 -mv \
                 -f GQ \
                 ~{ploidy} \
-                ~{"--ploidy " + samples} \
+                ~{"--samples-file " + samples} \
                 -Oz \
                 -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
             tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
