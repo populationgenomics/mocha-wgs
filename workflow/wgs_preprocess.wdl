@@ -13,32 +13,35 @@ version 1.0
 
 workflow MochaWgsPreprocess {
     input {
-        File alignments
-        File alignments_index
-        File gvcf
-        File gvcf_index
+        File? alignments
+        File? alignments_index
+        File? gvcf
+        File? gvcf_index
         File ref_fasta
         File ref_fai
         File ref_dict
         String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
         Array[String] chromosomes = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrX", "chrY", "chrM"]
-        File intervals
+        File? intervals
         File? samples_file
         Int scatter_count = 10
-        File hapmap
-        File hapmap_index
-        File omni
-        File omni_index
-        File g1000
-        File g1000_index
-        File dbsnp
-        File dbsnp_index
-        File mills
-        File mills_index
-        File axiom_poly
-        File axiom_poly_index
+        File? hapmap
+        File? hapmap_index
+        File? omni
+        File? omni_index
+        File? g1000
+        File? g1000_index
+        File? dbsnp
+        File? dbsnp_index
+        File? mills
+        File? mills_index
+        File? axiom_poly
+        File? axiom_poly_index
         Int snps_max_gaussians = 6
         Int indels_max_gaussians = 4
+        Boolean run_gatk = true
+        Boolean run_bcftools = true
+        Boolean restrict_bcftools_to_gatk_sites = true
 
         # Runtime options
         String gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
@@ -55,34 +58,30 @@ workflow MochaWgsPreprocess {
         Int boot_disk_size = 12
     }
 
-    call SplitIntervals {
-        input:
-            intervals = intervals,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            ref_dict = ref_dict,
-            scatter_count = scatter_count,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+    if (run_gatk) {
+        r_gvcf = select_first([gvcf])
+        r_gvcf_index = select_first([gvcf_index])
+        r_intervals = select_first([intervals])
+        r_hapmap = select_first([hapmap])
+        r_hapmap_index = select_first([hapmap_index])
+        r_omni = select_first([omni])
+        r_omni_index = select_first([omni_index])
+        r_g1000 = select_first([g1000])
+        r_g1000_index = select_first([g1000_index])
+        r_dbsnp = select_first([dbsnp])
+        r_dbsnp_index = select_first([dbsnp_index])
+        r_mills = select_first([mills])
+        r_mills_index = select_first([mills_index])
+        r_axiom_poly = select_first([axiom_poly])
+        r_axiom_poly_index = select_first([axiom_poly_index])
 
-    scatter (subintervals in SplitIntervals.interval_files) {
-        call MochaGenotypeGVCFs {
+        call SplitIntervals {
             input:
-                gvcf = gvcf,
-                gvcf_index = gvcf_index,
+                intervals = r_intervals,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
                 ref_dict = ref_dict,
-                intervals = subintervals,
-                dbsnp = dbsnp,
-                dbsnp_index = dbsnp_index,
+                scatter_count = scatter_count,
                 gatk_docker = gatk_docker,
                 preemptible = preemptible,
                 max_retries = max_retries,
@@ -92,134 +91,165 @@ workflow MochaWgsPreprocess {
                 disk = disk,
                 boot_disk_size = boot_disk_size
         }
-    }
 
-    String merged_vcf_basename = basename(MochaGenotypeGVCFs.gt_vcf[0], ".vcf.gz")
+        scatter (subintervals in SplitIntervals.interval_files) {
+            call GenotypeGVCFs {
+                input:
+                    gvcf = r_gvcf,
+                    gvcf_index = r_gvcf_index,
+                    ref_fasta = ref_fasta,
+                    ref_fai = ref_fai,
+                    ref_dict = ref_dict,
+                    intervals = subintervals,
+                    dbsnp = r_dbsnp,
+                    dbsnp_index = r_dbsnp_index,
+                    gatk_docker = gatk_docker,
+                    preemptible = preemptible,
+                    max_retries = max_retries,
+                    gatk_cpu = gatk_cpu,
+                    gatk_mem = gatk_mem,
+                    gatk_mem_padding = gatk_mem_padding,
+                    disk = disk,
+                    boot_disk_size = boot_disk_size
+            }
+        }
 
-    call MergeVcfs as MergeGenotypedVcfs {
-        input:
-            vcfs = MochaGenotypeGVCFs.gt_vcf,
-            vcf_indexes = MochaGenotypeGVCFs.gt_vcf_index,
-            output_name = merged_vcf_basename,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        String merged_vcf_basename = basename(MochaGenotypeGVCFs.gt_vcf[0], ".vcf.gz")
 
-    call MochaVariantFiltration {
-        input:
-            vcf = MergeGenotypedVcfs.merged_vcf,
-            vcf_index = MergeGenotypedVcfs.merged_vcf_index,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call MergeVcfs as MergeGenotypedVcfs {
+            input:
+                vcfs = MochaGenotypeGVCFs.gt_vcf,
+                vcf_indexes = MochaGenotypeGVCFs.gt_vcf_index,
+                output_name = merged_vcf_basename,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaSitesOnlyVcf {
-        input:
-            vcf = MochaVariantFiltration.filtered_vcf,
-            vcf_index = MochaVariantFiltration.filtered_vcf_index,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call VariantFiltration {
+            input:
+                vcf = MergeGenotypedVcfs.merged_vcf,
+                vcf_index = MergeGenotypedVcfs.merged_vcf_index,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaSnpRecalibrator {
-        input:
-            vcf = MochaSitesOnlyVcf.so_vcf,
-            vcf_index = MochaSitesOnlyVcf.so_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            hapmap = hapmap,
-            hapmap_index = hapmap_index,
-            omni = omni,
-            omni_index = omni_index,
-            g1000 = g1000,
-            g1000_index = g1000_index,
-            dbsnp = dbsnp,
-            dbsnp_index = dbsnp_index,
-            max_gaussians = snps_max_gaussians,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call SitesOnlyVcf {
+            input:
+                vcf = VariantFiltration.filtered_vcf,
+                vcf_index = VariantFiltration.filtered_vcf_index,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaIndelRecalibrator {
-        input:
-            vcf = MochaSitesOnlyVcf.so_vcf,
-            vcf_index = MochaSitesOnlyVcf.so_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            mills = mills,
-            mills_index = mills_index,
-            dbsnp = dbsnp,
-            dbsnp_index = dbsnp_index,
-            axiom_poly = axiom_poly,
-            axiom_poly_index = axiom_poly_index,
-            max_gaussians = indels_max_gaussians,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call SnpRecalibrator {
+            input:
+                vcf = SitesOnlyVcf.so_vcf,
+                vcf_index = SitesOnlyVcf.so_vcf_index,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                hapmap = r_hapmap,
+                hapmap_index = r_hapmap_index,
+                omni = r_omni,
+                omni_index = r_omni_index,
+                g1000 = r_g1000,
+                g1000_index = r_g1000_index,
+                dbsnp = r_dbsnp,
+                dbsnp_index = r_dbsnp_index,
+                max_gaussians = snps_max_gaussians,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaApplyVqsr {
-        input:
-            vcf = MochaVariantFiltration.filtered_vcf,
-            vcf_index = MochaVariantFiltration.filtered_vcf_index,
-            snp_recal = MochaSnpRecalibrator.snp_recal,
-            snp_re1cal_index = MochaSnpRecalibrator.snp_recal_index,
-            snp_tranches = MochaSnpRecalibrator.snp_tranches,
-            indel_recal = MochaIndelRecalibrator.indel_recal,
-            indel_recal_index = MochaIndelRecalibrator.indel_recal_index,
-            indel_tranches = MochaIndelRecalibrator.indel_tranches,
-            intervals = intervals,
-            gatk_docker = gatk_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            gatk_cpu = gatk_cpu,
-            gatk_mem = gatk_mem,
-            gatk_mem_padding = gatk_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call IndelRecalibrator {
+            input:
+                vcf = MochaSitesOnlyVcf.so_vcf,
+                vcf_index = MochaSitesOnlyVcf.so_vcf_index,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                mills = mills,
+                mills_index = mills_index,
+                dbsnp = dbsnp,
+                dbsnp_index = dbsnp_index,
+                axiom_poly = axiom_poly,
+                axiom_poly_index = axiom_poly_index,
+                max_gaussians = indels_max_gaussians,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    scatter(chrom in chromosomes) {
-        call MochaBcftoolsMpileup {
+        call ApplyVqsr {
+            input:
+                vcf = MochaVariantFiltration.filtered_vcf,
+                vcf_index = MochaVariantFiltration.filtered_vcf_index,
+                snp_recal = MochaSnpRecalibrator.snp_recal,
+                snp_re1cal_index = MochaSnpRecalibrator.snp_recal_index,
+                snp_tranches = MochaSnpRecalibrator.snp_tranches,
+                indel_recal = MochaIndelRecalibrator.indel_recal,
+                indel_recal_index = MochaIndelRecalibrator.indel_recal_index,
+                indel_tranches = MochaIndelRecalibrator.indel_tranches,
+                intervals = intervals,
+                gatk_docker = gatk_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                gatk_cpu = gatk_cpu,
+                gatk_mem = gatk_mem,
+                gatk_mem_padding = gatk_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
+
+        call MochaAddGcContent as MochaAddGcContentOriginal {
             input:
                 vcf = MochaApplyVqsr.vqsr_vcf,
                 vcf_index = MochaApplyVqsr.vqsr_vcf_index,
-                cram = alignments,
-                cram_index = alignments_index,
-                samples = samples_file,
-                regions = chrom,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
-                ref_name = ref_name,
+                mochatools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
+
+        call MochaFilterVcf as MochaFilterVcfOriginal {
+            input:
+                vcf = MochaAddGcContentOriginal.gc_vcf,
+                vcf_index = MochaAddGcContentOriginal.gc_vcf_index,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
                 bcftools_docker = mochatools_docker,
                 preemptible = preemptible,
                 max_retries = max_retries,
@@ -231,85 +261,78 @@ workflow MochaWgsPreprocess {
         }
     }
 
-    Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
-    Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
-    
-    call MochaConcatMpileupChrVCFs {
-        input:
-            vcfs = mpileup_vcfs,
-            vcf_indexes = mpileup_vcf_indexes,
-            bcftools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+    if (run_bcftools) {
+        scatter(chrom in chromosomes) {
+            call MochaBcftoolsMpileup {
+                input:
+                    vcf = MochaApplyVqsr.vqsr_vcf,
+                    vcf_index = MochaApplyVqsr.vqsr_vcf_index,
+                    cram = alignments,
+                    cram_index = alignments_index,
+                    samples = samples_file,
+                    regions = chrom,
+                    ref_fasta = ref_fasta,
+                    ref_fai = ref_fai,
+                    ref_name = ref_name,
+                    bcftools_docker = mochatools_docker,
+                    preemptible = preemptible,
+                    max_retries = max_retries,
+                    bcftools_cpu = bcftools_cpu,
+                    bcftools_mem = bcftools_mem,
+                    bcftools_mem_padding = bcftools_mem_padding,
+                    disk = disk,
+                    boot_disk_size = boot_disk_size
+            }
+        }
 
-    call MochaAddGcContent as MochaAddGcContentOriginal {
-        input:
-            vcf = MochaApplyVqsr.vqsr_vcf,
-            vcf_index = MochaApplyVqsr.vqsr_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            mochatools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
+        Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
+        
+        call MochaConcatMpileupChrVCFs {
+            input:
+                vcfs = mpileup_vcfs,
+                vcf_indexes = mpileup_vcf_indexes,
+                bcftools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaAddGcContent as MochaAddGcContentMpileup {
-        input:
-            vcf = MochaConcatMpileupChrVCFs.concat_vcf,
-            vcf_index = MochaConcatMpileupChrVCFs.concat_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            mochatools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
+        call MochaAddGcContent as MochaAddGcContentMpileup {
+            input:
+                vcf = MochaConcatMpileupChrVCFs.concat_vcf,
+                vcf_index = MochaConcatMpileupChrVCFs.concat_vcf_index,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                mochatools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
 
-    call MochaFilterVcf as MochaFilterVcfOriginal {
-        input:
-            vcf = MochaAddGcContentOriginal.gc_vcf,
-            vcf_index = MochaAddGcContentOriginal.gc_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            bcftools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
-    }
-
-    call MochaFilterVcf as MochaFilterVcfMpileup {
-        input:
-            vcf = MochaAddGcContentMpileup.gc_vcf,
-            vcf_index = MochaAddGcContentMpileup.gc_vcf_index,
-            ref_fasta = ref_fasta,
-            ref_fai = ref_fai,
-            bcftools_docker = mochatools_docker,
-            preemptible = preemptible,
-            max_retries = max_retries,
-            bcftools_cpu = bcftools_cpu,
-            bcftools_mem = bcftools_mem,
-            bcftools_mem_padding = bcftools_mem_padding,
-            disk = disk,
-            boot_disk_size = boot_disk_size
+        call MochaFilterVcf as MochaFilterVcfMpileup {
+            input:
+                vcf = MochaAddGcContentMpileup.gc_vcf,
+                vcf_index = MochaAddGcContentMpileup.gc_vcf_index,
+                ref_fasta = ref_fasta,
+                ref_fai = ref_fai,
+                bcftools_docker = mochatools_docker,
+                preemptible = preemptible,
+                max_retries = max_retries,
+                bcftools_cpu = bcftools_cpu,
+                bcftools_mem = bcftools_mem,
+                bcftools_mem_padding = bcftools_mem_padding,
+                disk = disk,
+                boot_disk_size = boot_disk_size
+        }
     }
 
 
@@ -371,7 +394,7 @@ task SplitIntervals {
     }
 }
 
-task MochaGenotypeGVCFs {
+task GenotypeGVCFs {
     input {
         File gvcf
         File gvcf_index
@@ -467,7 +490,7 @@ task MergeVcfs {
 
 }
 
-task MochaVariantFiltration {
+task VariantFiltration {
     input {
         File vcf
         File vcf_index
@@ -511,7 +534,7 @@ task MochaVariantFiltration {
     }
 }
 
-task MochaSitesOnlyVcf {
+task SitesOnlyVcf {
     input {
         File vcf
         File vcf_index
@@ -552,7 +575,7 @@ task MochaSitesOnlyVcf {
     }
 }
 
-task MochaSnpRecalibrator {
+task SnpRecalibrator {
     input {
         File vcf
         File vcf_index
@@ -617,7 +640,7 @@ task MochaSnpRecalibrator {
     }
 }
 
-task MochaIndelRecalibrator {
+task IndelRecalibrator {
     input {
         File vcf
         File vcf_index
@@ -679,7 +702,7 @@ task MochaIndelRecalibrator {
     }
 }
 
-task MochaApplyVqsr {
+task ApplyVqsr {
     input {
         File vcf
         File vcf_index
@@ -793,7 +816,7 @@ task MochaAddGcContent {
     }
 }
 
-task MochaBcftoolsMpileup {
+task BcftoolsMpileup {
     input {
         File vcf
         File vcf_index
@@ -877,7 +900,7 @@ task MochaBcftoolsMpileup {
     }
 }
 
-task MochaConcatMpileupChrVCFs {
+task ConcatMpileupChrVCFs {
     input {
         Array[File] vcfs
         Array[File] vcf_indexes
@@ -908,131 +931,6 @@ task MochaConcatMpileupChrVCFs {
     output {
         File concat_vcf = "~{vcf_basename}.mpileup.vcf.gz"
         File concat_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: bcftools_docker
-        cpu: bcftools_cpu
-        memory: bcftools_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task MochaCorrectAD {
-    input {
-        File original_vcf
-        File original_vcf_index
-        File mpileup_vcf
-        File mpileup_vcf_index
-
-        # Runtime options
-        String bcftools_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int bcftools_cpu = 4
-        Int bcftools_mem = 10
-        Int bcftools_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
-    String original_vcf_basename = basename(basename(original_vcf, ".gz"), ".vcf")
-    String mpileup_vcf_basename = basename(basename(mpileup_vcf, ".gz"), ".vcf")
-
-    command <<<
-        # Create minimal VCFs
-        # Original VCF
-        bcftools annotate \
-            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
-            -Oz \
-            -o ~{original_vcf_basename}.minimal.vcf.gz \
-            ~{original_vcf}
-        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.minimal.vcf.gz
-
-        # mpileup VCF - also reheader with '_BCFTOOLS' suffix to sample name
-        SAMPLE="$(bcftools query -l ~{mpileup_vcf})"
-        echo "${SAMPLE}_BCFTOOLS" > sample_name.bcftools.txt
-        bcftools annotate \
-            -x QUAL,FILTER,INFO,^FORMAT/GT,^FORMAT/AD,^FORMAT/DP \
-            ~{mpileup_vcf} | \
-        bcftools reheader \
-            -s sample_name.bcftools.txt \
-            -Oz \
-            -o ~{mpileup_vcf_basename}.minimal.vcf.gz \
-        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.minimal.vcf.gz
-
-        # Merge the minimal VCFs and correct the AD and DP fields
-        bcftools merge \
-            -m both \
-            ~{original_vcf_basename}.minimal.vcf.gz \
-            ~{mpileup_vcf_basename}.minimal.vcf.gz | \
-        bcftools view -H | \
-        gawk -v FS="\t" -v OFS="\t" '
-        BEGIN {
-            fmt = "GT:AD:DP";
-        }
-        {
-            if ($9 == fmt) {
-                ad_idx = 2;
-                dp_idx = 3;
-            } else {
-                split($9, fmt_field, ":");
-                for (i = 1; i <= length(fmt_field); i++) {
-                    if (fmt_field[i] == "AD") {
-                        ad_idx = i;
-                    } else if (fmt_field[i] == "DP") {
-                        dp_idx = i;
-                    }
-                }
-            }
-
-            split($10, fmt_orig, ":");
-            split(fmt_orig[ad_idx], ad_orig, ",");
-            dp_orig = fmt_orig[dp_idx];
-            
-            split($11, fmt_bcf, ":");
-            split(fmt_bcf[ad_idx], ad_bcf, ",");
-            dp_bcf = fmt_bcf[dp_idx];
-
-            use_bcftools = 1;
-            if (dp_bcf !~ /^[0-9]+$/) {
-                use_bcftools = 0;
-            }
-            for (i = 1; i <= length(ad_bcf); i++) {
-                if (ad_bcf[i] !~ /^[0-9]+$/) {
-                    use_bcftools = 0;
-                    break;
-                }
-            }
-
-            if (use_bcftools) {
-                print $1, $2, ".", $4, $5, ".", ".", ".", "AD:DP", (fmt_bcf[ad_idx] ":" dp_bcf);
-            }
-        }
-        ' > ~{mpileup_vcf_basename}.annotations.vcf.body
-        cat <(bcftools view -h ~{original_vcf}) ~{mpileup_vcf_basename}.annotations.vcf.body > ~{mpileup_vcf_basename}.annotations.vcf
-        bgzip -c ~{mpileup_vcf_basename}.annotations.vcf > ~{mpileup_vcf_basename}.annotations.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{mpileup_vcf_basename}.annotations.vcf.gz
-
-        # Annotate input VCF with new AD and DP values
-        bcftools annotate \
-            -Oz \
-            -o ~{original_vcf_basename}.ad_corrected.vcf.gz \
-            -a ~{mpileup_vcf_basename}.annotations.vcf.gz \
-            -c "FMT/AD,FMT/DP" \
-            ~{original_vcf}
-        tabix -s 1 -b 2 -e 2 ~{original_vcf_basename}.ad_corrected.vcf.gz
-    >>>
-
-    output {
-        File corrected_vcf = "~{original_vcf_basename}.ad_corrected.vcf.gz"
-        File corrected_vcf_index = "~{original_vcf_basename}.ad_corrected.vcf.gz.tbi"
-        File annotations_vcf = "~{mpileup_vcf_basename}.annotations.vcf.gz"
-        File annotations_vcf_index = "~{mpileup_vcf_basename}.annotations.vcf.gz.tbi"
     }
 
     runtime {
