@@ -5,9 +5,18 @@ version 1.0
 # ================================== #
 
 # This workflow is designed to preprocess WGS data for MoChA analysis.
-# The inputs to the workflow are a CRAM or BAM file and a gVCF.
+# The inputs to the workflow are a CRAM or BAM file and/or a pre-genotyped VCF.
 #
-# The gVCF will be processed through GATK's GenotypeGVCFs to generate a VCF.
+# If supplying a VCF and use_existing_vcf is true,
+# the VCF will be processed to be ready for MoChA analysis.
+#
+# If supplying a CRAM/BAM and run_bcftools is true,
+# bcftools will be run to call and genotype variants, and the resulting VCF
+# will be processed to be ready for MoChA analysis.
+# Additionally, if a pre-genotyped VCF is also provided and
+# restrict_bcftools_to_gatk_sites is true,
+# the sites in the existing VCF will be used to restrict bcftools mpileup
+#
 # The VCF will first be processed through the mochatools bcftools plugin to
 # add GC content annotations to the VCF.
 
@@ -15,8 +24,8 @@ workflow MochaWgsPreprocess {
     input {
         File? alignments
         File? alignments_index
-        File? gvcf
-        File? gvcf_index
+        File? vcf
+        File? vcf_index
         File ref_fasta
         File ref_fai
         File ref_dict
@@ -39,7 +48,7 @@ workflow MochaWgsPreprocess {
         File? axiom_poly_index
         Int snps_max_gaussians = 6
         Int indels_max_gaussians = 4
-        Boolean run_gatk = true
+        Boolean use_existing_vcf = true
         Boolean run_bcftools = true
         Boolean restrict_bcftools_to_gatk_sites = true
 
@@ -58,180 +67,14 @@ workflow MochaWgsPreprocess {
         Int boot_disk_size = 12
     }
 
-    if (run_gatk) {
-        r_gvcf = select_first([gvcf])
-        r_gvcf_index = select_first([gvcf_index])
-        r_intervals = select_first([intervals])
-        r_hapmap = select_first([hapmap])
-        r_hapmap_index = select_first([hapmap_index])
-        r_omni = select_first([omni])
-        r_omni_index = select_first([omni_index])
-        r_g1000 = select_first([g1000])
-        r_g1000_index = select_first([g1000_index])
-        r_dbsnp = select_first([dbsnp])
-        r_dbsnp_index = select_first([dbsnp_index])
-        r_mills = select_first([mills])
-        r_mills_index = select_first([mills_index])
-        r_axiom_poly = select_first([axiom_poly])
-        r_axiom_poly_index = select_first([axiom_poly_index])
-
-        call SplitIntervals {
-            input:
-                intervals = r_intervals,
-                ref_fasta = ref_fasta,
-                ref_fai = ref_fai,
-                ref_dict = ref_dict,
-                scatter_count = scatter_count,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        scatter (subintervals in SplitIntervals.interval_files) {
-            call GenotypeGVCFs {
-                input:
-                    gvcf = r_gvcf,
-                    gvcf_index = r_gvcf_index,
-                    ref_fasta = ref_fasta,
-                    ref_fai = ref_fai,
-                    ref_dict = ref_dict,
-                    intervals = subintervals,
-                    dbsnp = r_dbsnp,
-                    dbsnp_index = r_dbsnp_index,
-                    gatk_docker = gatk_docker,
-                    preemptible = preemptible,
-                    max_retries = max_retries,
-                    gatk_cpu = gatk_cpu,
-                    gatk_mem = gatk_mem,
-                    gatk_mem_padding = gatk_mem_padding,
-                    disk = disk,
-                    boot_disk_size = boot_disk_size
-            }
-        }
-
-        String merged_vcf_basename = basename(MochaGenotypeGVCFs.gt_vcf[0], ".vcf.gz")
-
-        call MergeVcfs as MergeGenotypedVcfs {
-            input:
-                vcfs = MochaGenotypeGVCFs.gt_vcf,
-                vcf_indexes = MochaGenotypeGVCFs.gt_vcf_index,
-                output_name = merged_vcf_basename,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        call VariantFiltration {
-            input:
-                vcf = MergeGenotypedVcfs.merged_vcf,
-                vcf_index = MergeGenotypedVcfs.merged_vcf_index,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        call SitesOnlyVcf {
-            input:
-                vcf = VariantFiltration.filtered_vcf,
-                vcf_index = VariantFiltration.filtered_vcf_index,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        call SnpRecalibrator {
-            input:
-                vcf = SitesOnlyVcf.so_vcf,
-                vcf_index = SitesOnlyVcf.so_vcf_index,
-                ref_fasta = ref_fasta,
-                ref_fai = ref_fai,
-                hapmap = r_hapmap,
-                hapmap_index = r_hapmap_index,
-                omni = r_omni,
-                omni_index = r_omni_index,
-                g1000 = r_g1000,
-                g1000_index = r_g1000_index,
-                dbsnp = r_dbsnp,
-                dbsnp_index = r_dbsnp_index,
-                max_gaussians = snps_max_gaussians,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        call IndelRecalibrator {
-            input:
-                vcf = MochaSitesOnlyVcf.so_vcf,
-                vcf_index = MochaSitesOnlyVcf.so_vcf_index,
-                ref_fasta = ref_fasta,
-                ref_fai = ref_fai,
-                mills = mills,
-                mills_index = mills_index,
-                dbsnp = dbsnp,
-                dbsnp_index = dbsnp_index,
-                axiom_poly = axiom_poly,
-                axiom_poly_index = axiom_poly_index,
-                max_gaussians = indels_max_gaussians,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
-
-        call ApplyVqsr {
-            input:
-                vcf = MochaVariantFiltration.filtered_vcf,
-                vcf_index = MochaVariantFiltration.filtered_vcf_index,
-                snp_recal = MochaSnpRecalibrator.snp_recal,
-                snp_re1cal_index = MochaSnpRecalibrator.snp_recal_index,
-                snp_tranches = MochaSnpRecalibrator.snp_tranches,
-                indel_recal = MochaIndelRecalibrator.indel_recal,
-                indel_recal_index = MochaIndelRecalibrator.indel_recal_index,
-                indel_tranches = MochaIndelRecalibrator.indel_tranches,
-                intervals = intervals,
-                gatk_docker = gatk_docker,
-                preemptible = preemptible,
-                max_retries = max_retries,
-                gatk_cpu = gatk_cpu,
-                gatk_mem = gatk_mem,
-                gatk_mem_padding = gatk_mem_padding,
-                disk = disk,
-                boot_disk_size = boot_disk_size
-        }
+    if (use_existing_vcf) {
+        File r_vcf = select_first([vcf])
+        File r_vcf_index = select_first([vcf_index])
 
         call MochaAddGcContent as MochaAddGcContentOriginal {
             input:
-                vcf = MochaApplyVqsr.vqsr_vcf,
-                vcf_index = MochaApplyVqsr.vqsr_vcf_index,
+                vcf = r_vcf,
+                vcf_index = r_vcf_index,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
                 mochatools_docker = mochatools_docker,
@@ -262,18 +105,21 @@ workflow MochaWgsPreprocess {
     }
 
     if (run_bcftools) {
+        File r_alignments = select_first([alignments])
+        File r_alignments_index = select_first([alignments_index])
         scatter(chrom in chromosomes) {
-            call MochaBcftoolsMpileup {
+            call BcftoolsMpileup {
                 input:
-                    vcf = MochaApplyVqsr.vqsr_vcf,
-                    vcf_index = MochaApplyVqsr.vqsr_vcf_index,
-                    cram = alignments,
-                    cram_index = alignments_index,
+                    vcf = vcf,
+                    vcf_index = vcf_index,
+                    alignments = r_alignments,
+                    alignments_index = r_alignments_index,
                     samples = samples_file,
                     regions = chrom,
                     ref_fasta = ref_fasta,
                     ref_fai = ref_fai,
                     ref_name = ref_name,
+                    restrict_bcftools_to_gatk_sites = restrict_bcftools_to_gatk_sites,
                     bcftools_docker = mochatools_docker,
                     preemptible = preemptible,
                     max_retries = max_retries,
@@ -285,10 +131,10 @@ workflow MochaWgsPreprocess {
             }
         }
 
-        Array[File] mpileup_vcfs = select_all(MochaBcftoolsMpileup.bcftools_vcf)
-        Array[File] mpileup_vcf_indexes = select_all(MochaBcftoolsMpileup.bcftools_vcf_index)
+        Array[File] mpileup_vcfs = select_all(BcftoolsMpileup.bcftools_vcf)
+        Array[File] mpileup_vcf_indexes = select_all(BcftoolsMpileup.bcftools_vcf_index)
         
-        call MochaConcatMpileupChrVCFs {
+        call ConcatMpileupChrVCFs {
             input:
                 vcfs = mpileup_vcfs,
                 vcf_indexes = mpileup_vcf_indexes,
@@ -304,8 +150,8 @@ workflow MochaWgsPreprocess {
 
         call MochaAddGcContent as MochaAddGcContentMpileup {
             input:
-                vcf = MochaConcatMpileupChrVCFs.concat_vcf,
-                vcf_index = MochaConcatMpileupChrVCFs.concat_vcf_index,
+                vcf = ConcatMpileupChrVCFs.concat_vcf,
+                vcf_index = ConcatMpileupChrVCFs.concat_vcf_index,
                 ref_fasta = ref_fasta,
                 ref_fai = ref_fai,
                 mochatools_docker = mochatools_docker,
@@ -335,434 +181,11 @@ workflow MochaWgsPreprocess {
         }
     }
 
-
     output {
-        File genotyped_vcf = MergeGenotypedVcfs.merged_vcf
-        File genotyped_vcf_index = MergeGenotypedVcfs.merged_vcf_index
-        File filtered_vcf = MochaApplyVqsr.vqsr_vcf
-        File filtered_vcf_index = MochaApplyVqsr.vqsr_vcf_index
-        File mocha_ready_gatk_vcf = MochaFilterVcfOriginal.mocha_filtered_vcf
-        File mocha_ready_gatk_vcf_index = MochaFilterVcfOriginal.mocha_filtered_vcf_index
-        File mocha_ready_mpileup_vcf = MochaFilterVcfMpileup.mocha_filtered_vcf
-        File mocha_ready_mpileup_vcf_index = MochaFilterVcfMpileup.mocha_filtered_vcf_index
-    }
-}
-
-task SplitIntervals {
-    input {
-        File intervals
-        File ref_fasta
-        File ref_fai
-        File ref_dict
-        Int scatter_count
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-
-    command <<<
-        mkdir interval-files
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" SplitIntervals \
-            -R ~{ref_fasta} \
-            -L ~{intervals} \
-            -scatter ~{scatter_count} \
-            -O interval-files
-        cp interval-files/*.interval_list .
-    >>>
-
-    output {
-        Array[File] interval_files = glob("*.interval_list")
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task GenotypeGVCFs {
-    input {
-        File gvcf
-        File gvcf_index
-        File ref_fasta
-        File ref_fai
-        File ref_dict
-        File intervals
-        File dbsnp
-        File dbsnp_index
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(gvcf, ".gz"), ".g.vcf")
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" GenotypeGVCFs \
-            -R ~{ref_fasta} \
-            -V ~{gvcf} \
-            -O ~{vcf_basename}.vcf.gz \
-            -L ~{intervals} \
-            -D ~{dbsnp} \
-            -G StandardAnnotation \
-            --only-output-calls-starting-in-intervals \
-            --use-new-qual-calculator
-    >>>
-
-    output {
-        File gt_vcf = "~{vcf_basename}.vcf.gz"
-        File gt_vcf_index = "~{vcf_basename}.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task MergeVcfs {
-    input {
-        Array[File] vcfs
-        Array[File] vcf_indexes
-        String output_name
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String output_vcf = output_name + ".vcf.gz"
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" MergeVcfs \
-            -I ~{sep=" -I " vcfs} \
-            -O ~{output_vcf}
-    >>>
-
-    output {
-        File merged_vcf = output_vcf
-        File merged_vcf_index = output_vcf + ".tbi"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-
-}
-
-task VariantFiltration {
-    input {
-        File vcf
-        File vcf_index
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-    Float excess_het_threshold = 54.69
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" VariantFiltration \
-            -V ~{vcf} \
-            -O ~{vcf_basename}.filtered.vcf.gz \
-            --filter-expression "ExcessHet > ~{excess_het_threshold}" \
-            --filter-name ExcessHet
-    >>>
-
-    output {
-        File filtered_vcf = "~{vcf_basename}.filtered.vcf.gz"
-        File filtered_vcf_index = "~{vcf_basename}.filtered.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task SitesOnlyVcf {
-    input {
-        File vcf
-        File vcf_index
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" MakeSitesOnlyVcf \
-            --INPUT ~{vcf} \
-            --OUTPUT ~{vcf_basename}.sites_only.vcf.gz
-    >>>
-
-    output {
-        File so_vcf = "~{vcf_basename}.sites_only.vcf.gz"
-        File so_vcf_index = "~{vcf_basename}.sites_only.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task SnpRecalibrator {
-    input {
-        File vcf
-        File vcf_index
-        File ref_fasta
-        File ref_fai
-        File hapmap
-        File hapmap_index
-        File omni
-        File omni_index
-        File g1000
-        File g1000_index
-        File dbsnp
-        File dbsnp_index
-        Int max_gaussians = 6
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-    String snp_recal_tranche_values = "100.0,99.95,99.9,99.8,99.6,99.5,99.4,99.3,99.0,98.0,97.0,90.0"
-    String snp_recal_an_values = "QD,MQRankSum,ReadPosRankSum,FS,MQ,SOR,DP"
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" VariantRecalibrator \
-            -V ~{vcf} \
-            -O ~{vcf_basename}.snps.recal \
-            --tranches-file ~{vcf_basename}.snps.tranches \
-            --trust-all-polymorphic \
-            -tranche $(echo ~{snp_recal_tranche_values} | sed -E -e 's/,/ -tranche /g') \
-            -an $(echo ~{snp_recal_an_values} | sed -E -e 's/,/ -an /g') \
-            -mode SNP \
-            --max-gaussians ~{max_gaussians} \
-            -resource:hapmap,known=false,training=true,truth=true,prior=15.0 ~{hapmap} \
-            -resource:omni,known=false,training=true,truth=true,prior=12.0 ~{omni} \
-            -resource:1000G,known=false,training=true,truth=false,prior=10.0 ~{g1000} \
-            -resource:dbsnp,known=true,training=false,truth=false,prior=7.0 ~{dbsnp}
-    >>>
-
-    output {
-        File snp_recal = "~{vcf_basename}.snps.recal"
-        File snp_recal_index = "~{vcf_basename}.snps.recal.idx"
-        File snp_tranches = "~{vcf_basename}.snps.tranches"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task IndelRecalibrator {
-    input {
-        File vcf
-        File vcf_index
-        File ref_fasta
-        File ref_fai
-        File mills
-        File mills_index
-        File dbsnp
-        File dbsnp_index
-        File axiom_poly
-        File axiom_poly_index
-        Int max_gaussians = 4
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-    String indel_recal_tranche_values = "100.0,99.95,99.9,99.5,99.0,97.0,96.0,95.0,94.0,93.5,93.0,92.0,91.0,90.0"
-    String indel_recal_an_values = "FS,ReadPosRankSum,MQRankSum,QD,SOR,DP"
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" VariantRecalibrator \
-            -V ~{vcf} \
-            -O ~{vcf_basename}.indels.recal \
-            --tranches-file ~{vcf_basename}.indels.tranches \
-            --trust-all-polymorphic \
-            -tranche $(echo ~{indel_recal_tranche_values} | sed -E -e 's/,/ -tranche /g') \
-            -an $(echo ~{indel_recal_an_values} | sed -E -e 's/,/ -an /g') \
-            -mode INDEL \
-            --max-gaussians ~{max_gaussians} \
-            -resource:mills,known=false,training=true,truth=true,prior=12.0 ~{mills} \
-            -resource:axiomPoly,known=false,training=true,truth=false,prior=2.0 ~{axiom_poly} \
-            -resource:dbsnp,known=true,training=false,truth=false,prior=2.0 ~{dbsnp}
-    >>>
-
-    output {
-        File indel_recal = "~{vcf_basename}.indels.recal"
-        File indel_recal_index = "~{vcf_basename}.indels.recal.idx"
-        File indel_tranches = "~{vcf_basename}.indels.tranches"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
-    }
-}
-
-task ApplyVqsr {
-    input {
-        File vcf
-        File vcf_index
-        File snp_recal
-        File snp_re1cal_index
-        File snp_tranches
-        File indel_recal
-        File indel_recal_index
-        File indel_tranches
-        File intervals
-
-        # Runtime options
-        String gatk_docker
-        Int preemptible = 2
-        Int max_retries = 2
-        Int gatk_cpu = 4
-        Int gatk_mem = 10
-        Int gatk_mem_padding = 1
-        Int disk = 100
-        Int boot_disk_size = 12
-    }
-
-    Int command_mem = (gatk_mem - gatk_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
-    Float snp_vqsr_threshold = 99.7
-    Float indel_vqsr_threshold = 99.7
-
-    command <<<
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" ApplyVQSR \
-            -V ~{vcf} \
-            -O tmp.snp.recalibrated.vcf \
-            --truth-sensitivity-filter-level ~{snp_vqsr_threshold} \
-            --tranches-file ~{snp_tranches} \
-            --recal-file ~{snp_recal} \
-            --create-output-variant-index true \
-            --mode SNP
-
-        gatk --java-options "-Xmx~{command_mem}m -Xms~{command_mem - 1000}m" ApplyVQSR \
-            -V tmp.snp.recalibrated.vcf \
-            -O ~{vcf_basename}.vqsr.vcf.gz \
-            --truth-sensitivity-filter-level ~{indel_vqsr_threshold} \
-            --tranches-file ~{indel_tranches} \
-            --recal-file ~{indel_recal} \
-            --create-output-variant-index true \
-            --mode INDEL
-    >>>
-
-    output {
-        File vqsr_vcf = "~{vcf_basename}.vqsr.vcf.gz"
-        File vqsr_vcf_index = "~{vcf_basename}.vqsr.vcf.gz.tbi"
-    }
-
-    runtime {
-        docker: gatk_docker
-        cpu: gatk_cpu
-        memory: gatk_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
-        preemptible: preemptible
-        maxRetries: max_retries
-        bootDiskSizeGb: boot_disk_size
+        File? mocha_ready_gatk_vcf = MochaFilterVcfOriginal.mocha_filtered_vcf
+        File? mocha_ready_gatk_vcf_index = MochaFilterVcfOriginal.mocha_filtered_vcf_index
+        File? mocha_ready_mpileup_vcf = MochaFilterVcfMpileup.mocha_filtered_vcf
+        File? mocha_ready_mpileup_vcf_index = MochaFilterVcfMpileup.mocha_filtered_vcf_index
     }
 }
 
@@ -818,15 +241,16 @@ task MochaAddGcContent {
 
 task BcftoolsMpileup {
     input {
-        File vcf
-        File vcf_index
-        File cram
-        File cram_index
+        File? vcf
+        File? vcf_index
+        File alignments
+        File alignments_index
         File? samples
         String? regions
         File ref_fasta
         File ref_fai
         String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
+        Boolean restrict_bcftools_to_gatk_sites
 
         # Runtime options
         String bcftools_docker
@@ -840,53 +264,61 @@ task BcftoolsMpileup {
     }
 
     Int command_mem = (bcftools_mem - bcftools_mem_padding) * 1000
-    String vcf_basename = basename(basename(vcf, ".gz"), ".vcf")
+    String sample_name = basename(basename(alignments, ".cram"), ".bam")
     String ploidy = if (ref_name == "GRCh38" || ref_name == "GRCh37") then "--ploidy ~{ref_name}" else ""
     String regions_param = if (defined(regions)) then "-r ~{regions}" else ""
+    Boolean use_vcf = (restrict_bcftools_to_gatk_sites && defined(vcf))
+    String use_vcf_str = if (use_vcf) then "TRUE" else "FALSE"
+    String regions_vcf = "regions.sites_only.vcf.gz"
+    String regions_vcf_param = if (use_vcf) then ("-R " + regions_vcf) else ""
 
     command <<<
-        # Generate a sites-only VCF from the original VCF
-        bcftools view \
-            -G \
-            ~{regions_param} \
-            ~{vcf} | \
-        bcftools annotate \
-            -x INFO \
-            -Oz \
-            -o ~{vcf_basename}.sites_only.vcf.gz
-        tabix -s 1 -b 2 -e 2 ~{vcf_basename}.sites_only.vcf.gz
-
-        # Only proceed if there are variant sites in the VCF
-        NOTEMPTY="$(bcftools view -H ~{vcf_basename}.sites_only.vcf.gz | head -n 1 | wc -l)"
-        if [ "$NOTEMPTY" -eq "1" ]
+        if [ "~{use_vcf_str}" = "TRUE" ]
         then
-            # Run bcftools mpileup and call to generate GT and AD fields
-            bcftools mpileup \
-                -d 8000 \
-                -a "FORMAT/DP,FORMAT/AD" \
-                -f ~{ref_fasta} \
-                -R ~{vcf_basename}.sites_only.vcf.gz \
-                ~{cram} | \
-            bcftools call \
-                -mv \
-                -f GQ \
-                ~{ploidy} \
-                ~{"--samples-file " + samples} \
+            # Optional: generate a sites-only VCF from the original VCF
+            bcftools view \
+                -G \
+                ~{regions_param} \
+                ~{vcf} | \
+            bcftools annotate \
+                -x INFO \
                 -Oz \
-                -o ~{vcf_basename}.mpileup.unnorm.vcf.gz
-            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.unnorm.vcf.gz
-            bcftools norm \
-                --fasta-ref ~{ref_fasta} \
-                ~{vcf_basename}.mpileup.unnorm.vcf.gz \
-                -Oz \
-                -o ~{vcf_basename}.mpileup.vcf.gz
-            tabix -s 1 -b 2 -e 2 ~{vcf_basename}.mpileup.vcf.gz
+                -o ~{regions_vcf}
+            tabix -s 1 -b 2 -e 2 ~{regions_vcf}
+            # Only proceed if there are variant sites in the VCF
+            NOTEMPTY="$(bcftools view -H ~{regions_vcf} | head -n 1 | wc -l | sed -E -e 's/^\s+//g')"
+            if [ ! "$NOTEMPTY" -eq "1" ]
+            then
+                exit 0
+            fi
         fi
+
+        # Run bcftools mpileup and call to generate GT and AD fields
+        bcftools mpileup \
+            -d 8000 \
+            -a "FORMAT/DP,FORMAT/AD" \
+            -f ~{ref_fasta} \
+            ~{regions_vcf_param} \
+            ~{alignments} | \
+        bcftools call \
+            -mv \
+            -f GQ \
+            ~{ploidy} \
+            ~{"--samples-file " + samples} \
+            -Oz \
+            -o ~{sample_name}.mpileup.unnorm.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{sample_name}.mpileup.unnorm.vcf.gz
+        bcftools norm \
+            --fasta-ref ~{ref_fasta} \
+            ~{sample_name}.mpileup.unnorm.vcf.gz \
+            -Oz \
+            -o ~{sample_name}.mpileup.vcf.gz
+        tabix -s 1 -b 2 -e 2 ~{sample_name}.mpileup.vcf.gz
     >>>
 
     output {
-        File? bcftools_vcf = "~{vcf_basename}.mpileup.vcf.gz"
-        File? bcftools_vcf_index = "~{vcf_basename}.mpileup.vcf.gz.tbi"
+        File? bcftools_vcf = "~{sample_name}.mpileup.vcf.gz"
+        File? bcftools_vcf_index = "~{sample_name}.mpileup.vcf.gz.tbi"
     }
 
     runtime {
