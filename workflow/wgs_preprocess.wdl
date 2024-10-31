@@ -51,10 +51,14 @@ workflow MochaWgsPreprocess {
         Boolean use_existing_vcf = true
         Boolean run_bcftools = true
         Boolean restrict_bcftools_to_gatk_sites = true
+        Boolean filter_duplicate_reads = true
+        Boolean filter_secondary_alignments = true
+        Boolean filter_unmapped_reads = true
 
         # Runtime options
         String gatk_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/gatk:4.2.1.0"
         String mochatools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/mochatools:latest"
+        String samtools_docker = "australia-southeast1-docker.pkg.dev/pb-dev-312200/somvar-images/samtools:latest"
         Int preemptible = 2
         Int max_retries = 2
         Int gatk_cpu = 4
@@ -63,6 +67,9 @@ workflow MochaWgsPreprocess {
         Int bcftools_cpu = 4
         Int bcftools_mem = 10
         Int bcftools_mem_padding = 1
+        Int samtools_cpu = 4
+        Int samtools_mem = 10
+        Int samtools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
     }
@@ -107,13 +114,36 @@ workflow MochaWgsPreprocess {
     if (run_bcftools) {
         File r_alignments = select_first([alignments])
         File r_alignments_index = select_first([alignments_index])
+
+        if (filter_duplicate_reads || filter_secondary_alignments || filter_unmapped_reads) {
+            call FilterBam {
+                input:
+                    alignments = r_alignments,
+                    alignments_index = r_alignments_index,
+                    ref_fasta = ref_fasta,
+                    ref_fai = ref_fai,
+                    ref_dict = ref_dict,
+                    filter_duplicate_reads = filter_duplicate_reads,
+                    filter_secondary_alignments = filter_secondary_alignments,
+                    filter_unmapped_reads = filter_unmapped_reads,
+                    samtools_docker = samtools_docker,
+                    preemptible = preemptible,
+                    max_retries = max_retries,
+                    samtools_cpu = samtools_cpu,
+                    samtools_mem = samtools_mem,
+                    samtools_mem_padding = samtools_mem_padding,
+                    disk = disk,
+                    boot_disk_size = boot_disk_size
+            }
+        }
+
         scatter(chrom in chromosomes) {
             call BcftoolsMpileup {
                 input:
                     vcf = vcf,
                     vcf_index = vcf_index,
-                    alignments = r_alignments,
-                    alignments_index = r_alignments_index,
+                    alignments = select_first([FilterBam.filtered_bam, r_alignments]),
+                    alignments_index = select_first([FilterBam.filtered_bam_index, r_alignments_index]),
                     samples = samples_file,
                     regions = chrom,
                     ref_fasta = ref_fasta,
@@ -239,6 +269,65 @@ task MochaAddGcContent {
     }
 }
 
+task FilterBam {
+    input {
+        File alignments
+        File alignments_index
+        File ref_fasta
+        File ref_fai
+        File ref_dict
+        Boolean filter_duplicate_reads = true
+        Boolean filter_secondary_alignments = true
+        Boolean filter_unmapped_reads = true
+
+        # Runtime options
+        String samtools_docker
+        Int preemptible = 2
+        Int max_retries = 2
+        Int samtools_cpu = 4
+        Int samtools_mem = 10
+        Int samtools_mem_padding = 1
+        Int disk = 100
+        Int boot_disk_size = 12
+    }
+
+    Int command_mem = (samtools_mem - samtools_mem_padding) * 1000
+    String sample_name = basename(basename(alignments, ".cram"), ".bam")
+    Int exclude_flags = (if (filter_duplicate_reads) then 1024 else 0) + (if (filter_secondary_alignments) then 256 else 0) + (if (filter_unmapped_reads) then 4 else 0)
+    String exclude_flags_param = (if (exclude_flags > 0) then "-F ~{exclude_flags}" else "")
+    Int nthreads = if (samtools_cpu < 2) then 0 else samtools_cpu - 1
+
+    command <<<
+        samtools view \
+            -h \
+            -b \
+            ~{exclude_flags_param} \
+            -@ ~{nthreads} \
+            -T ~{ref_fasta} \
+            -o "~{sample_name}.filtered.bam"
+        samtools index \
+            -b \
+            -@ ~{nthreads} \
+            -o "~{sample_name}.filtered.bam.bai" \
+            "~{sample_name}.filtered.bam"
+    >>>
+
+    output {
+        File filtered_bam = "~{sample_name}.filtered.bam"
+        File filtered_bam_index = "~{sample_name}.filtered.bam.bai"
+    }
+
+    runtime {
+        docker: samtools_docker
+        cpu: samtools_cpu
+        memory: samtools_mem + " GB"
+        disks: "local-disk " + disk + " HDD"
+        preemptible: preemptible
+        maxRetries: max_retries
+        bootDiskSizeGb: boot_disk_size
+    }
+}
+
 task BcftoolsMpileup {
     input {
         File? vcf
@@ -251,6 +340,7 @@ task BcftoolsMpileup {
         File ref_fai
         String ref_name = "GRCh38"  # Currently only supports GRCh38 or GRCh37
         Boolean restrict_bcftools_to_gatk_sites
+        Int min_mapq = 10
 
         # Runtime options
         String bcftools_docker
@@ -297,6 +387,7 @@ task BcftoolsMpileup {
         bcftools mpileup \
             -d 8000 \
             -a "FORMAT/DP,FORMAT/AD" \
+            -q ~{min_mapq} \
             -f ~{ref_fasta} \
             ~{regions_vcf_param} \
             ~{alignments} | \
