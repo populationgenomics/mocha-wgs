@@ -308,8 +308,8 @@ task FilterBam {
         samtools index \
             -b \
             -@ ~{nthreads} \
-            -o "~{sample_name}.filtered.bam.bai" \
-            "~{sample_name}.filtered.bam"
+            "~{sample_name}.filtered.bam" \
+            "~{sample_name}.filtered.bam.bai"
     >>>
 
     output {
