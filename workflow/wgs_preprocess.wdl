@@ -72,6 +72,7 @@ workflow MochaWgsPreprocess {
         Int samtools_mem_padding = 1
         Int disk = 100
         Int boot_disk_size = 12
+        Float cram_to_bam_multiplier = 6.0
     }
 
     if (use_existing_vcf) {
@@ -116,6 +117,11 @@ workflow MochaWgsPreprocess {
         File r_alignments_index = select_first([alignments_index])
 
         if (filter_duplicate_reads || filter_secondary_alignments || filter_unmapped_reads) {
+            Boolean is_cram = basename(basename(r_alignments, ".bam"), ".cram") == basename(r_alignments, ".cram")
+            Float multipler = if (is_cram) then cram_to_bam_multiplier else 2.5
+            Int alignment_size = ceil(size(r_alignments, "GB") + size(r_alignments_index, "GB"))
+            Int ref_size = ceil(size(ref_fasta, "GB") + size(ref_fai, "GB") + size(ref_dict, "GB"))
+            Int samtools_disk = ceil((alignment_size * multipler) + ref_size + disk)
             call FilterBam {
                 input:
                     alignments = r_alignments,
@@ -132,7 +138,7 @@ workflow MochaWgsPreprocess {
                     samtools_cpu = samtools_cpu,
                     samtools_mem = samtools_mem,
                     samtools_mem_padding = samtools_mem_padding,
-                    disk = disk,
+                    samtools_disk = samtools_disk,
                     boot_disk_size = boot_disk_size
             }
         }
@@ -287,7 +293,7 @@ task FilterBam {
         Int samtools_cpu = 4
         Int samtools_mem = 10
         Int samtools_mem_padding = 1
-        Int disk = 100
+        Int samtools_disk = 100
         Int boot_disk_size = 12
     }
 
@@ -305,6 +311,7 @@ task FilterBam {
             -@ ~{nthreads} \
             -T ~{ref_fasta} \
             -o "~{sample_name}.filtered.bam"
+            ~{alignments}
         samtools index \
             -b \
             -@ ~{nthreads} \
@@ -321,7 +328,7 @@ task FilterBam {
         docker: samtools_docker
         cpu: samtools_cpu
         memory: samtools_mem + " GB"
-        disks: "local-disk " + disk + " HDD"
+        disks: "local-disk " + samtools_disk + " HDD"
         preemptible: preemptible
         maxRetries: max_retries
         bootDiskSizeGb: boot_disk_size
