@@ -310,7 +310,7 @@ task FilterBam {
             ~{exclude_flags_param} \
             -@ ~{nthreads} \
             -T ~{ref_fasta} \
-            -o "~{sample_name}.filtered.bam"
+            -o "~{sample_name}.filtered.bam" \
             ~{alignments}
         samtools index \
             -b \
